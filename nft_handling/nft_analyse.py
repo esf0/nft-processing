@@ -26,6 +26,7 @@ import matplotlib
 import signal_generation as sg
 
 import warnings
+from datetime import datetime
 
 
 
@@ -33,6 +34,12 @@ reload(sg)
 reload(FNFTpy)
 
 from prettytable import PrettyTable
+
+
+def print_calc_time(start_time, type_of_calc=''):
+    end_time = datetime.now()
+    total_time = end_time - start_time
+    print('Time to calculate ' + type_of_calc, total_time.total_seconds() * 1000, 'ms')
 
 
 def is_arg_jump(first, second):
@@ -735,42 +742,6 @@ def get_transfer_matrix(q, dt, n, xi, type='bo', sigma=1):
     return t_matrix
 
 
-def get_sech(t, xi, a, c, sigma=1):
-    q = a * np.power(1.0 / np.cosh(t), (1.0 + 1.0j * c))
-    d = np.sqrt(sigma * a ** 2 - c ** 2 / 4.0)
-
-    a_xi = gamma(0.5 - 1.0j * (xi + c / 2)) * gamma(0.5 - 1.0j * (xi - c / 2)) / \
-           (gamma(0.5 - 1.0j * xi - d) * gamma(0.5 - 1.0j * xi + d))
-
-    b_xi = 1.0 / (2.0 ** (1.0j * c) * a) * gamma(0.5 - 1.0j * (xi + c / 2)) * gamma(0.5 + 1.0j * (xi - c / 2)) / \
-           (gamma(-0.5j * c - d) * gamma(-0.5j * c + d))
-
-    k = np.array([i for i in range(int(np.sqrt(a ** 2 - c ** 2 / 4.0) - 0.5) + 1)])
-
-    xi_discr = 1.0j * (np.sqrt(a ** 2 - c ** 2 / 4.0) - 0.5 - k)
-
-    f = gamma(0.5 - 1.0j * (xi_discr + c / 2.0)) * gamma(0.5 - 1.0j * (xi_discr - c / 2.0)) / gamma(
-        0.5 - 1.0j * xi_discr + d)
-
-    phi = np.ones(len(k), dtype=complex)
-    # for i in range(k[-1] - 1):
-    for l in range(len(k) - 1):
-        phi[l + 1] = -(l + 1) * phi[l]
-        # print('phi', l+1, phi[l+1])
-
-    b_discr = 1.0 / (2 ** (1.0j * c) * a) * gamma(0.5 - 1.0j * (xi_discr + c / 2)) * gamma(
-        0.5 + 1.0j * (xi_discr - c / 2)) / \
-              (gamma(-0.5j * c - d) * gamma(-0.5j * c + d))
-    r_discr = 1.0j * b_discr / f / phi
-    ad_discr = f * phi / 1.0j
-
-    return q, a_xi, b_xi, xi_discr, b_discr, r_discr, ad_discr
-
-
-def get_sech_shape(t, a, c, sigma=1):
-    q, _, _, xi_discr, _, _, _ = get_sech(t, np.array([0]), a, c, sigma)
-    return q, xi_discr
-
 
 def get_scattering(q, t, xi, type='bo', sigma=1):
     # We use grid t_n = -t_span / 2. - dt / 2 + dt * n
@@ -920,7 +891,10 @@ def get_omega_continuous(r, xi, t):
     for j in range(n_t):
         exp_xi_t = np.exp(-1.0j * t[j] * xi)
         # exp_xi_t = np.exp(1.0j * t[j] * xi)
-        omega_r[j] = 0.5 / np.pi * trapz(r * exp_xi_t, dx=d_xi)
+        x = r * exp_xi_t
+        # omega_r[j] = 0.5 / np.pi * trapz(x, dx=d_xi)  # trapz method to integrate
+
+        omega_r[j] = 0.5 / np.pi * 0.5 * (np.sum(x[0:len(x) - 1]) + np.sum(x[1:len(x)])) * d_xi  # middle Riemann sum
 
     return omega_r
 
@@ -1094,8 +1068,11 @@ def make_dbp_nft(q, t, z_back, xi_upsampling=1, inverse_type='both', fnft_type=1
     xi = xi_val[0] + np.arange(n_xi) * (xi_val[1] - xi_val[0]) / (n_xi - 1)
 
     # make direct nft
+    start_time = datetime.now()
     # res = nsev(q, t, xi[0], xi[-1], n_xi, dst=2, cst=2, dis=19)
     res = nsev(q, t, xi[0], xi[-1], n_xi, dst=2, cst=2, dis=fnft_type, K=1024)
+    if print_sys_message:
+        print_calc_time(start_time, 'direct NFT')
 
     if res['return_value'] != 0:
         print('[make_dbp_nft] Error: fnft failed!')
@@ -1141,24 +1118,54 @@ def make_dbp_nft(q, t, z_back, xi_upsampling=1, inverse_type='both', fnft_type=1
     q_total = []
     # restore right q part with itib
     if inverse_type == 'tib' or inverse_type == 'both':
+
+        start_time = datetime.now()
         omega_r = get_omega_continuous(b_prop / a, xi, coef_t * t)
+        if print_sys_message:
+            print_calc_time(start_time, 'continuous part of z-chirp')
+
         if len(xi_d) > 0:
+            start_time = datetime.now()
             omega_d = get_omega_discrete(bd_prop / ad, xi_d, coef_t * t)
+            if print_sys_message:
+                print_calc_time(start_time, 'discrete part of z-chirp')
+
             # omega_d_bid = get_omega_discrete(bd_bid_prop / ad_test_bid, xi_d, coef_t * t)
+
+            start_time = datetime.now()
             q_right_part = make_itib(omega_d + omega_r, coef_t * t)
+            if print_sys_message:
+                print_calc_time(start_time, 'TIB')
             # q_right_part_bid = make_itib(omega_d_bid + omega_r, coef_t * t)
         else:
+            start_time = datetime.now()
             q_right_part = make_itib(omega_r, coef_t * t)
+            if print_sys_message:
+                print_calc_time(start_time, 'TIB')
 
         # restore left q part with itib
+
+        start_time = datetime.now()
         omega_r = get_omega_continuous(np.conj(b_prop) / a, xi, coef_t * t)
+        if print_sys_message:
+            print_calc_time(start_time, 'continuous part of z-chirp')
+
         if len(xi_d) > 0:
+            start_time = datetime.now()
             omega_d = get_omega_discrete(1.0 / bd_prop / ad, xi_d, coef_t * t)
+            if print_sys_message:
+                print_calc_time(start_time, 'discrete part of z-chirp')
             # omega_d_bid = get_omega_discrete(1.0 / bd_bid_prop / ad_test_bid, xi_d, coef_t * t)
+            start_time = datetime.now()
             q_left_part = make_itib(omega_d + omega_r, coef_t * t)
+            if print_sys_message:
+                print_calc_time(start_time, 'TIB')
             # q_left_part_bid = make_itib(omega_d_bid + omega_r, coef_t * t)
         else:
+            start_time = datetime.now()
             q_left_part = make_itib(omega_r, coef_t * t)
+            if print_sys_message:
+                print_calc_time(start_time, 'TIB')
 
         q_total = np.concatenate((q_left_part[:len(t) // 2], np.conj(q_right_part[:len(t) // 2][::-1])))
 

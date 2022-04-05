@@ -42,7 +42,7 @@ def srrcos_spec(f, args):
     t_symb = args[0]
     p = args[1]
 
-    return np.sqrt(rcos_spec(f, t_symb, p))
+    return np.sqrt(rcos_spec(f, [t_symb, p]))
 
 
 def srrcos(t, args):
@@ -55,11 +55,11 @@ def srrcos(t, args):
     if t == 0:
         return 1. / t_symb * (1. + p * (4. / pi - 1))
     elif abs(t) == t_symb / (4. * p):
-        return p / (t_symb * np.sqrt(2)) * ((1. + 2. / pi) * np.sin(pi / (4. * p)) + (1. - 2. / pi) * np.cos(pi / (4. * p)))
+        return p / (t_symb * np.sqrt(2)) * (
+                    (1. + 2. / pi) * np.sin(pi / (4. * p)) + (1. - 2. / pi) * np.cos(pi / (4. * p)))
     else:
-        return (np.sin(pi * t / t_symb * (1 - p)) + 4. * p * t / t_symb * np.cos(pi * t / t_symb * (1 + p))) / (pi * t * (1. - (4. * p * t / t_symb) ** 2))
-
-
+        return (np.sin(pi * t / t_symb * (1 - p)) + 4. * p * t / t_symb * np.cos(pi * t / t_symb * (1 + p))) / (
+                    pi * t * (1. - (4. * p * t / t_symb) ** 2))
 
 
 def get_constellation_point(bit_data, type="qpsk"):
@@ -216,8 +216,8 @@ def get_wdm_symbol(data, t_symb, n_symb, func, func_args, n_carriers=1, mod_type
 
     return symbol
 
-def get_wdm_symbol_by_points(points, t_symb, n_symb, func, func_args, n_carriers=1, t_lateral=0, n_lateral=0):
 
+def get_wdm_symbol_by_points(points, t_symb, n_symb, func, func_args, n_carriers=1, t_lateral=0, n_lateral=0):
     if len(points) != n_carriers:
         print("[get_wdm_symbol]: wrong length of data")
         return 0
@@ -282,9 +282,9 @@ def get_wdm_signal(data, t_symb, n_symb, func, func_args, n_carriers=1, mod_type
     else:
         return signal
 
+
 def get_wdm_signal_by_points(points, t_symb, n_symb, func, func_args, n_carriers=1, t_lateral=0, n_lateral=0,
                              get_symbol=-1):
-
     if len(points) % n_carriers != 0:
         print("[get_wdm_signal_by_points]: wrong number of points")
         return 0
@@ -334,7 +334,6 @@ def get_average_power(signal, dt):
 
 
 def get_average_power_range(signal, dt, n_points_center):
-
     n_signal = len(signal)
     if n_points_center <= 0:
         n_points_center = n_signal // 2
@@ -511,94 +510,6 @@ def get_points_wdm(signal, t_symb, n_symb, func, func_args, n_carriers=1, dw=1.0
     return points
 
 
-# std::vector<std::complex<double>>
-# GetConstellationFromWDM(const std::vector<std::complex<double>> signal, int n_carriers, int n_symbol_samples,
-#                         double symbol_period, double dw,
-#                         std::function<std::complex<double>(double, double)> f_carrier) {
-#
-#
-#     unsigned int n_signal = signal.size();
-#     unsigned int n_symbols = n_signal / n_symbol_samples;
-#     unsigned int n_data = n_symbols * n_carriers;
-#
-#     double dt = symbol_period / n_symbol_samples;
-#
-#     std::vector<std::complex<double>> data_modulated(n_data);
-#
-#     // Go to Fourier space and take values for input frequences
-#     // For example we had s(t) = \sum_i X_i f(t) e^{i w_i t) -> take s(w_i)
-#
-#
-#     for (int i_symbols = 0; i_symbols < n_symbols; ++i_symbols) {
-#         std::vector<std::complex<double>> const one_symbol(signal.begin() + i_symbols * n_symbol_samples,
-#                                                            signal.begin() + (i_symbols + 1) * n_symbol_samples);
-#
-#
-#         for (int i_carrier = 0; i_carrier < n_carriers; ++i_carrier) {
-#
-#             int n_carrier_wave = i_carrier - (n_carriers - (n_carriers % 2)) / 2;
-#
-#             std::vector<std::complex<double>> one_symbol_moved(one_symbol);
-#             for (int i = 0; i < n_symbol_samples; i++) {
-#                 double t = i * dt;
-#                 one_symbol_moved[i] *= std::exp(
-#                         std::complex<double>(1i) * 2. * M_PI * dw * (double) n_carrier_wave * t);
-#             }
-#
-#
-#             // Convert C++ vector to array for using in GSL
-#             gsl_vector_complex *symbol_process = gsl_vector_complex_alloc(n_symbol_samples);
-#             symbol_process->data = ComplexVectorToArray(one_symbol_moved);
-#             symbol_process->size = n_symbol_samples;
-#             symbol_process->stride = 1;
-#
-#             // Find s(w_i)
-#
-#             gsl_fft_complex_radix2_forward(symbol_process->data, 1, n_symbol_samples);
-#             gsl_vector_complex_scale(symbol_process, gsl_complex_rect(1. / sqrt(n_symbol_samples), 0));
-#
-# //            DrawAbsSignal(ArrayToComplexVector(symbol_process->data, symbol_process->size));
-#
-#             // Cut spectrum with width dw near 0
-#             double spectrum_diminishment = 1.0;
-#             for (int i_spectrum = 1; i_spectrum < n_symbol_samples / 2; ++i_spectrum) {
-#                 if (i_spectrum / symbol_period > (dw / 2. * spectrum_diminishment)) {
-#                     gsl_vector_complex_set(symbol_process, i_spectrum, gsl_complex_rect(0., 0.));
-#                     gsl_vector_complex_set(symbol_process, n_symbol_samples - i_spectrum, gsl_complex_rect(0., 0.));
-#                 }
-#             }
-#
-# //            DrawAbsSignal(ArrayToComplexVector(symbol_process->data, symbol_process->size));
-#
-#             gsl_fft_complex_radix2_backward(symbol_process->data, 1, n_symbol_samples);
-#             gsl_vector_complex_scale(symbol_process, gsl_complex_rect(1. / sqrt(n_symbol_samples), 0));
-#
-#             std::vector<std::complex<double>> one_carrier_restored = ArrayToComplexVector(symbol_process->data,
-#                                                                                           symbol_process->size);
-#
-# //            DrawAbsSignal(one_carrier_restored);
-#
-#             std::complex<double> data = GetMaxAmplitudePoint(&one_carrier_restored);
-# //            std::complex<double> data = one_carrier_restored[one_carrier_restored.size() / 2];
-#
-#
-# //            for (int i = 0; i < n_symbol_samples; i++) {
-# //                double t = i * dt;
-# //                if (f_carrier(t, symbol_period) != std::complex<double>(0, 0)) {
-# //                    data += signal[i + i_symbols * n_symbol_samples] / f_carrier(t, symbol_period) *
-# //                            std::exp(-std::complex<double>(1i) * 2. * M_PI * dw * (double) -n_carrier_wave * t) * dt;
-# //                }
-# //            }
-# //            data /= symbol_period;
-#
-#             data_modulated[i_symbols * n_carriers + i_carrier] = data;
-#         }
-#     }
-#
-#     return data_modulated;
-# }
-
-
 def gen_bit_sequence(n_bits, seed=0):
     random.seed(seed)
     bits = random.getrandbits(n_bits)
@@ -683,7 +594,6 @@ def get_ber_by_points(points_init, points, mod_type):
 
 # nonlinear phase compensation (phase shift equalisation)
 def make_pse(points_init, points, mod_type):
-
     n = 100
     d_alpha = 2 * np.pi / n
     min_per = 1.0
@@ -727,12 +637,12 @@ def dispersion_to_beta2(dispersion, wavelenght_nm=1550):
     return -(wavelenght_nm ** 2) * (dispersion * 10 ** 3) / (2. * np.pi * 3.0 * 10 ** 8)
 
 
-def nd_to_mw(p, t_symb=100, beta2=21.5, gamma=1.27 * 10**(-3)):
+def nd_to_mw(p, t_symb=100, beta2=21.5, gamma=1.27 * 10 ** (-3)):
     # t_symb in ps, beta2 in ps^2/km, gamma in mW^-1 * km^-1
     return p * beta2 / gamma * (t_symb) ** (-2)
 
 
-def mw_to_nd(p, t_symb=100, beta2=21.5, gamma=1.27 * 10**(-3)):
+def mw_to_nd(p, t_symb=100, beta2=21.5, gamma=1.27 * 10 ** (-3)):
     # t_symb in ps, beta2 in ps^2/km, gamma in mW^-1 * km^-1
     return p / (beta2 / gamma * (t_symb) ** (-2))
 
@@ -745,11 +655,11 @@ def dbm_to_mw(p):
     return 10 ** (p / 10)
 
 
-def nd_to_dbm(p, t_symb=100, beta2=21.5, gamma=1.27 * 10**(-3)):
+def nd_to_dbm(p, t_symb=100, beta2=21.5, gamma=1.27 * 10 ** (-3)):
     return mw_to_dbm(nd_to_mw(p, t_symb, beta2, gamma))
 
 
-def dbm_to_nd(p, t_symb=100, beta2=21.5, gamma=1.27 * 10**(-3)):
+def dbm_to_nd(p, t_symb=100, beta2=21.5, gamma=1.27 * 10 ** (-3)):
     return mw_to_nd(dbm_to_mw(p), t_symb, beta2, gamma)
 
 
@@ -767,7 +677,7 @@ def add_lateral(signal, n=0, value=0.0):
         n = np_signal // 2
 
     new_signal = value * np.ones(np_signal + 2 * n, dtype=complex)
-    new_signal[n : n + np_signal] = signal
+    new_signal[n: n + np_signal] = signal
 
     return new_signal
 
@@ -776,7 +686,6 @@ def add_lateral_function(signal, fun, dt, n=0):
     np_signal = len(signal)
     if n == 0:
         n = np_signal // 2
-
 
     left_point = signal[0]
     fun_param_left = [dt, abs(abs(signal[1]) - abs(signal[0])), left_point, -dt]
@@ -792,7 +701,7 @@ def add_lateral_function(signal, fun, dt, n=0):
 
 
 def next_power_of_2(x):
-    return 1 if x == 0 else 2**(x - 1).bit_length()
+    return 1 if x == 0 else 2 ** (x - 1).bit_length()
 
 
 def round_power_of_2(order, x):
@@ -802,22 +711,32 @@ def round_power_of_2(order, x):
 
     return temp
 
-def create_signal(number_of_symbols, p_dbm, mod_type, n_car, t_symb = 1., np_symb = 8, n_lateral_symbols = 0):
 
+def create_signal(number_of_symbols, p_dbm, mod_type, n_car, t_symb=1., np_symb=8, n_lateral_symbols=0, t_symb_ps=14.8,
+                  seed=0):
     n_lateral = n_lateral_symbols * np_symb
-    p_ave = dbm_to_nd(p_dbm, t_symb=14.8)
+    p_ave = dbm_to_nd(p_dbm, t_symb=t_symb_ps)
     roll_off = 0.1
     dt = t_symb / np_symb
 
     # generate bit sequence
     n_bits = n_car * get_n_bits(mod_type) * number_of_symbols
-    random.seed(0)
-    bits = random.getrandbits(n_bits)
-    data = "{0:b}".format(int(bits))
-    if len(data) < n_bits:
-        data = ''.join('0' for add_bit in range(n_bits - len(data))) + data
+    data = gen_bit_sequence(n_bits, seed)
 
     # create signal and set power
     signal = get_wdm_signal(data, t_symb, np_symb, rcos, [t_symb, roll_off],
-                               n_carriers=n_car, mod_type=mod_type, n_lateral=n_lateral)
+                            n_carriers=n_car, mod_type=mod_type, n_lateral=n_lateral)
     q = set_average_power(signal, dt, p_ave, len(signal) // 2 - n_lateral)
+
+    return q
+
+
+def loop_signal(q, n_add):
+
+    q_central = np.copy(q[n_add: -n_add])
+    n = len(q_central)
+    for k in range(n_add):
+        q_central[k] += q[n + n_add + k]
+        q_central[-k - 1] += q[n_add - 1 - k]
+
+    return q_central
