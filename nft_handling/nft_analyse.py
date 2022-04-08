@@ -24,6 +24,7 @@ import matplotlib.pyplot as plt
 import matplotlib
 
 import signal_generation as sg
+import test_signals
 
 import warnings
 from datetime import datetime
@@ -452,6 +453,18 @@ def make_dtib(q, t, sign):
 
 
 def make_itib(omega, t, sigma=1):
+    """
+    Inverse TIB algorithm to restore signal q form kernel
+
+    Args:
+        omega: Kernel function
+        t: time grid
+        sigma: defines focusing (+1) and defocusing (-1) cases
+
+    Returns:
+        q: restored signal in time points
+
+    """
     # sigma = 1 focusing case
     # sigma = -1 defocusing case
     n_t = len(t)
@@ -520,8 +533,25 @@ def make_itib_other(omega, t, sigma=1):
     return q
 
 
-def do_bi_direct(q, t, xi, type='orig', sigma=1):
+def do_bi_direct(q, t, xi, type='orig'):
+    """
+    Bi-directional algorithm to calculate residues and norming constants for one discrete spectrum point
+
+    Args:
+        q: signal
+        t: time grid
+        xi: spectral parameter where we calculate b(xi) (r(xi))
+        type: type of calculation scheme
+
+    Returns:
+        b: b-coefficient (norming constant)
+        r: r-coefficient (residue)
+        ad: derivative of a-coefficient in point xi
+
+    """
     # warnings.filterwarnings("error")
+
+    sigma = 1  # focusing case always
 
     dt = t[1] - t[0]
     n = len(q)
@@ -595,6 +625,21 @@ def do_bi_direct(q, t, xi, type='orig', sigma=1):
 
 
 def do_bi_direct_array(q, t, xi, type='orig'):
+    """
+    Bi-directional algorithm to calculate residues and norming constants for array of discrete spectrum points
+
+    Args:
+        q: signal
+        t: time grid
+        xi: array of spectral parameters where we calculate b(xi) (r(xi))
+        type: type of calculation scheme
+
+    Returns:
+        b: array of b-coefficients (norming constants)
+        r: array of r-coefficient (residues)
+        ad: array of derivative of a-coefficients in points xi
+
+    """
     n_xi = len(xi)
     b = np.zeros(n_xi, dtype=complex)
     r = np.zeros(n_xi, dtype=complex)
@@ -606,6 +651,17 @@ def do_bi_direct_array(q, t, xi, type='orig'):
 
 
 def get_pauli_coefficients(m):
+    """
+    Calculate matrix decomposition coefficients into Pauli matrices
+    m = a0 * s0 + a1 * s1 + a2 * s2 + a3 * s3
+
+    Args:
+        m: 2x2 matrix
+
+    Returns:
+        a: decomposition coefficients
+
+    """
     # m = a0 * s0 + a1 * s1 + a2 * s2 + a3 * s3
     # a0 = 1 / 2 * (m[0][0] + m[1][1])
     # a1 = 1 / 2 * (m[0][1] + m[1][0])
@@ -622,6 +678,15 @@ def get_pauli_coefficients(m):
 
 
 def expm_2x2(m):
+    """
+    Calculate exponential function of 2x2 matrix
+    Args:
+        m: 2x2 matrix
+
+    Returns:
+        expm: exponential function of 2x2 matrix
+
+    """
     # Exponential of matrix
 
     # s0 = np.array([[1, 0], [0, 1]])
@@ -653,6 +718,32 @@ def expm_2x2(m):
 
 
 def get_transfer_matrix(q, dt, n, xi, type='bo', sigma=1):
+    """
+    Return transfer matrix for one time-step of scattering problem for Jost function.
+
+    Args:
+        q: initial signal
+        dt: time step
+        n: index number (for q[n]) where calculate transfer matrix
+        xi: spectral parameter
+
+    Optional Args:
+        type: type of calculation, default = 'bo' -- Bofetta-Osborne
+
+            - bo -- Bofetta-Osborne
+            - bod -- Bofetta-Osborne with da / dxi
+            - tes4 -- TES4
+            - tes4d -- TES4 with da / dxi
+            - es4 -- ES4
+            - es4d -- ES4 with da / dxi
+
+        sigma: defines focusing (+1) and defocusing (-1) cases
+
+
+    Returns:
+        t_matrix: transfer matrix for index n
+
+    """
     n_q = len(q)
     # Add first element for 4th order schemes
     if n == n_q - 1:
@@ -744,6 +835,31 @@ def get_transfer_matrix(q, dt, n, xi, type='bo', sigma=1):
 
 
 def get_scattering(q, t, xi, type='bo', sigma=1):
+    """
+    Calculate scattering coefficients with transfer matrices for signal q and spectral parameter xi
+    Args:
+        q: signal points in time grid
+        t: time grid
+        xi: spectral parameter where we calculate coefficients
+
+    Optional Args:
+        type: type of calculation, default = 'bo' -- Bofetta-Osborne
+
+            - bo -- Bofetta-Osborne
+            - bod -- Bofetta-Osborne with da / dxi
+            - tes4 -- TES4
+            - tes4d -- TES4 with da / dxi
+            - es4 -- ES4
+            - es4d -- ES4 with da / dxi
+
+        sigma: defines focusing (+1) and defocusing (-1) cases
+
+    Returns:
+        a: coefficient a(xi)
+        b: coefficient b(xi)
+        ad: derivative da(xi) / dxi, optional
+
+    """
     # We use grid t_n = -t_span / 2. - dt / 2 + dt * n
     # First point is -t_span / 2. - dt / 2
     # Last point is t_span / 2. + dt / 2
@@ -784,6 +900,31 @@ def get_scattering(q, t, xi, type='bo', sigma=1):
 
 
 def get_scattering_array(q, t, xi, type='bo', sigma=1):
+    """
+        Calculate scattering coefficients with transfer matrices for signal q and array of spectral parameters xi
+        Args:
+            q: signal points in time grid
+            t: time grid
+            xi: array of spectral parameters where we calculate coefficients
+
+        Optional Args:
+            type: type of calculation, default = 'bo' -- Bofetta-Osborne
+
+                - bo -- Bofetta-Osborne
+                - bod -- Bofetta-Osborne with da / dxi
+                - tes4 -- TES4
+                - tes4d -- TES4 with da / dxi
+                - es4 -- ES4
+                - es4d -- ES4 with da / dxi
+
+            sigma: defines focusing (+1) and defocusing (-1) cases
+
+        Returns:
+            a: array of coefficients a(xi)
+            b: array of coefficients b(xi)
+            ad: array of derivatives da(xi) / dxi, optional
+
+        """
     n_xi = len(xi)
     a = np.zeros(n_xi, dtype=complex)
     b = np.zeros(n_xi, dtype=complex)
@@ -802,6 +943,37 @@ def get_scattering_array(q, t, xi, type='bo', sigma=1):
 
 
 def test_nft(ampl, chirp, t_span, n_t, n_grid, type='bo', fnft_type=11, plot_flag=1, function=np.absolute):
+    """
+    Test function for NFT.
+    It calculates and draws nonlinear spectrum for sech shape and compare it with theoretical values
+    sech = a * sech(t) ^ (1+ 1j * c)
+    Than it shows order of calculation methods
+
+    Args:
+        ampl: amplitude for sech shape
+        chirp: chirp parameter
+        t_span: length of full region in t domain, t in [-t_span/2; t_span/2]
+        n_t: number of discretisation points in t domain
+        n_grid: number of different n_xi
+
+    Optional Args:
+        type: type of calculation, default = 'bo' -- Bofetta-Osborne
+
+                - bo -- Bofetta-Osborne
+                - bod -- Bofetta-Osborne with da / dxi
+                - tes4 -- TES4
+                - tes4d -- TES4 with da / dxi
+                - es4 -- ES4
+                - es4d -- ES4 with da / dxi
+
+        fnft_type: type of calculation for FNFT library, default = 11
+        plot_flag: 1 - plots function(a - a_theory) and same for b, 2 - plots function(a - a_theory) and same for b
+        function: function to plot, default = np.absolute()
+
+    Returns:
+        nothing
+
+    """
     dt = t_span / (n_t - 1)
     t = np.array([i * dt - t_span / 2. for i in range(n_t)])
 
@@ -810,7 +982,7 @@ def test_nft(ampl, chirp, t_span, n_t, n_grid, type='bo', fnft_type=11, plot_fla
     d_xi = xi_span / (n_xi - 1)
     xi = np.array([i * d_xi - xi_span / 2. for i in range(n_xi)])
 
-    q, a_xi, b_xi, xi_discr, b_discr, r_discr, ad_discr = get_sech(t, xi, a=ampl, c=chirp)
+    q, a_xi, b_xi, xi_discr, b_discr, r_discr, ad_discr = test_signals.get_sech(t, xi, a=ampl, c=chirp)
 
     a = np.zeros((n_grid, n_xi), dtype=complex)
     b = np.zeros((n_grid, n_xi), dtype=complex)
@@ -819,7 +991,7 @@ def test_nft(ampl, chirp, t_span, n_t, n_grid, type='bo', fnft_type=11, plot_fla
         n_t_current = n_t * 2 ** k
         dt_current = t_span / (n_t_current - 1)
         t_current = np.array([i * dt_current - t_span / 2. for i in range(n_t_current)])
-        q_current, a_xi_temp, b_xi_temp, xi_discr_temp, b_discr_temp, r_discr_temp, ad_discr_temp = get_sech(
+        q_current, a_xi_temp, b_xi_temp, xi_discr_temp, b_discr_temp, r_discr_temp, ad_discr_temp = test_signals.get_sech(
             t_current, xi, a=ampl, c=chirp)
 
         if type == 'bo' or type == 'al' or type == 'es4' or type == 'tes4':
@@ -885,12 +1057,23 @@ def test_nft(ampl, chirp, t_span, n_t, n_grid, type='bo', fnft_type=11, plot_fla
 
 
 def get_omega_continuous(r, xi, t):
+    """
+    Calculate kernel of spectrum coefficient r(xi).
+    For xi on real axe it corresponds to continuous spectrum part.
+    Args:
+        r: spectrum coefficient r in spectral points xi
+        xi: spectral points
+        t: time grid
+
+    Returns:
+        kernel function
+
+    """
     d_xi = xi[1] - xi[0]
     n_t = len(t)
     omega_r = np.zeros(n_t, dtype=complex)
     for j in range(n_t):
         exp_xi_t = np.exp(-1.0j * t[j] * xi)
-        # exp_xi_t = np.exp(1.0j * t[j] * xi)
         x = r * exp_xi_t
         # omega_r[j] = 0.5 / np.pi * trapz(x, dx=d_xi)  # trapz method to integrate
 
@@ -899,19 +1082,18 @@ def get_omega_continuous(r, xi, t):
     return omega_r
 
 
-# def get_omega_continuous_other(r, xi, t):
-#
-#     d_xi = xi[1] - xi[0]
-#     n_t = len(t)
-#     omega_r = np.zeros(n_t, dtype=complex)
-#     for j in range(n_t):
-#         exp_xi_t = np.exp(-1.0j * t[j] * xi)
-#         omega_r[j] = 0.5 / np.pi * trapz(r * exp_xi_t, dx=d_xi)
-#
-#     return omega_r
-
-
 def get_omega_discrete(r, xi, t):
+    """
+        Calculate kernel of spectrum coefficients r_n(xi_n) for discrete spectrum.
+        Args:
+            r: spectrum coefficient r_n in discrete spectrum points xi_n
+            xi: discrete spectrum points
+            t: time grid
+
+        Returns:
+            kernel function
+
+        """
     n_xi = len(xi)
     n_t = len(t)
     omega_d = np.zeros(n_t, dtype=complex)
@@ -960,6 +1142,25 @@ def get_roots_contour(q, t, contour, type='bo', a_coefficients=None, ad_coeffici
 def make_dbp_nft_two_intervals(q_small, t_small, q_big, t_big, z_back, xi_upsampling_small=1, xi_upsampling_big=1,
                                fnft_type_small=11, fnft_type_big=11, inverse_type='both',
                                print_sys_message=False):
+    """
+    Test function, not yet implemented.
+
+    Args:
+        q_small:
+        t_small:
+        q_big:
+        t_big:
+        z_back:
+        xi_upsampling_small:
+        xi_upsampling_big:
+        fnft_type_small:
+        fnft_type_big:
+        inverse_type:
+        print_sys_message:
+
+    Returns:
+
+    """
     # be careful, z_back is the distance for backward propagation
     # to make forward use -z_back
 
@@ -1053,6 +1254,28 @@ def make_dbp_nft_two_intervals(q_small, t_small, q_big, t_big, z_back, xi_upsamp
 
 
 def make_dbp_nft(q, t, z_back, xi_upsampling=1, inverse_type='both', fnft_type=11, print_sys_message=False):
+    """
+    Perform NFT backpropagation.
+
+    Args:
+        q: signal at spatial point z
+        t: time grid for signal
+        z_back: propagation distance z in dimensionless units
+        xi_upsampling: upsampling parameter for continuous nonlinear spectrum. len(xi) = xi_upsampling * len(q)
+        inverse_type: type for inverse NFT, default = 'both'
+            - 'both' -- both fnft (layer peeling with Darboux) and iTIB method
+            - 'fnft' -- fnft method (layer peeling with Darboux)
+            - 'tib' -- iTIB method, combination for left and right problems
+        fnft_type: type of FNFT calculation, default = 11
+        print_sys_message: print additional messages during calculation, default = False
+
+    Returns:
+        Dictionary with calculated signals in defined spatial point (-z_back)
+            - q_total' -- signal calculated with iTIB
+            - 'q_fnft' -- signal calculated with fnft
+            - 'error' -- result of FNFT procedure
+
+    """
     # be careful, z_back is the distance for backward propagation
     # to make forward use -z_back
 
@@ -1236,6 +1459,32 @@ def make_dnft(q, t, xi_upsampling=1, fnft_type=11, print_sys_message=False):
     return result
 
 
+def get_continuous_spectrum(q, t, xi, type=''):
+    ...
+
+
+def get_discrete_eigenvalues(q, t, type=''):
+    # types: fnft, pjt
+    discrete_spectrum = []
+    if type == 'fnft':
+
+        rv, xi_val = nsev_inverse_xi_wrapper(n_t, t[0], t[-1], n_xi)
+        xi = xi_val[0] + np.arange(n_xi) * (xi_val[1] - xi_val[0]) / (n_xi - 1)
+
+        # make direct nft
+        # res = nsev(q, t, xi[0], xi[-1], n_xi, dst=2, cst=2, dis=19)
+        res = nsev(q, t, xi[0], xi[-1], n_xi, dst=2, cst=2, dis=fnft_type, K=1024)
+
+    elif type == 'pjt':
+        ...
+    else:
+        print('[get_discrete_eigenvalues]: wrong type parameter')
+
+    return discrete_spectrum
+
+
+def get_discrete_spectrum(q, t, type_eigen='', type_coef=''):
+    ...
 
 
 # Igor's pjt method
