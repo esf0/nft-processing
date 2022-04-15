@@ -1,11 +1,14 @@
 import sys
+
 # adding signal_handling to the system path
 sys.path.insert(0, '../signal_handling/')
+sys.path.insert(0, '../pjt/')
 
 from importlib import reload
 import FNFTpy
+
 reload(FNFTpy)
-from FNFTpy import nsev
+from FNFTpy import nsev, nsev_poly
 from FNFTpy import nsev_inverse, nsev_inverse_xi_wrapper
 import numpy as np
 import scipy as sp
@@ -25,22 +28,54 @@ import matplotlib
 
 import signal_generation as sg
 import test_signals
+from pjt import pjt
 
 import warnings
 from datetime import datetime
 
-
-
 reload(sg)
 reload(FNFTpy)
 
-from prettytable import PrettyTable
+# from prettytable import PrettyTable
 
 
 def print_calc_time(start_time, type_of_calc=''):
     end_time = datetime.now()
     total_time = end_time - start_time
     print('Time to calculate ' + type_of_calc, total_time.total_seconds() * 1000, 'ms')
+
+
+def get_raised_cos(t_span, n):
+    dt = t_span / (n - 1)
+
+    f = np.zeros(n)
+    for k in range(n):
+        t = dt * k - t_span / 2
+        if t < -t_span / 4 or t > t_span / 4:
+            f[k] = 0.5 * (1 - np.cos(4 * np.pi * t / t_span + 2 * np.pi))
+        else:
+            f[k] = 1.0
+
+    return f
+
+
+def get_raised_contour(ampl, xi_span, n_xi):
+    """
+    Return raised contour in complex plane
+    Args:
+        ampl: amplitude of imaginary part
+        xi_span: full spectral interval
+        n_xi: number of points
+
+    Returns:
+        Array of points
+
+    """
+    raised = get_raised_cos(xi_span, n_xi)
+    d_xi = xi_span / (n_xi - 1)
+    xi = np.array([-xi_span / 2 + i * d_xi for i in range(n_xi)]) + 1j * ampl * raised
+
+    return xi
 
 
 def is_arg_jump(first, second):
@@ -107,58 +142,6 @@ def get_a_cauchy(point, xi_cont, a_xi):
     return get_cauchy(0, point, xi_cont, a_xi - 1) + 1
 
 
-def fit_phase_jump_cauchy(xi_cont, a_xi, first, second, accuracy=1e-4):
-    direction = second - first
-    a_first = get_a_cauchy(first, xi_cont, a_xi)
-    a_second = get_a_cauchy(second, xi_cont, a_xi)
-
-    i = 1
-    while abs(second - first) > accuracy:
-        middle = first + direction / np.power(2.0, i)
-        a_middle = get_a_cauchy(middle, xi_cont, a_xi)
-
-        if is_arg_jump(a_first, a_second) == 1:
-            a_second = a_middle
-            second = middle
-        else:
-            a_first = a_middle
-            first = middle
-
-        i += 1
-
-        if i >= 100:
-            print("[fit_phase_jump]: Error! Number of iterations more than 100")
-            break
-
-    return first, second
-
-
-def fit_phase_jump(q, dt, func, func_args, first, second, accuracy=1e-4):
-    direction = second - first
-    a_first = func(q, dt, first, func_args[0], func_args[1])
-    a_second = func(q, dt, second, func_args[0], func_args[1])
-
-    i = 1
-    while abs(second - first) > accuracy:
-        middle = first + direction / np.power(2.0, i)
-        a_middle = func(q, dt, middle, func_args[0], func_args[1])
-
-        if is_arg_jump(a_first, a_second) == 1:
-            a_second = a_middle
-            second = middle
-        else:
-            a_first = a_middle
-            first = middle
-
-        i += 1
-
-        if i >= 100:
-            print("[fit_phase_jump]: Error! Number of iterations more than 100")
-            break
-
-    return first, second
-
-
 def get_contour_phase_shift_adaptive(q, t, xi_cont, a_xi):
     total_phase_shift = 0
     error_code = 0
@@ -188,240 +171,6 @@ def get_contour_phase_shift_adaptive(q, t, xi_cont, a_xi):
         total_phase_shift += d_phi
 
     return total_phase_shift, error_code, jump
-
-
-def find_one_eigenvalue_pjt_cauchy(q, t, xi_cont, a_xi, xi_first, xi_second):
-    eps_stop = 1e-8
-
-    delta_step = np.absolute(xi_first - xi_second)
-    line = [xi_first, xi_second]
-    a_line = []
-
-    res_temp = nsev(q, t, M=2, Xi1=xi_first, Xi2=xi_second, kappa=1, cst=1, dst=2)
-    a_res_temp = res_temp['cont_a']
-    a_line.append(a_res_temp[0])
-    a_line.append(a_res_temp[1])
-
-    step = complex(0., delta_step)
-
-    end = False
-    while not end:
-
-        right_point = line[-1] + step
-        left_point = line[-2] + step
-
-        a_right_point = get_a_cauchy(right_point, xi_cont, a_xi)
-        a_left_point = get_a_cauchy(left_point, xi_cont, a_xi)
-
-        push = False
-        if is_arg_jump(a_left_point, a_right_point) == 1:
-
-            push = True
-            step = left_point - line[-2]
-
-        elif is_arg_jump(a_left_point, a_line[-2]) == 1:
-
-            push = True
-            step = line[-2] - line[-1]
-
-            right_point = left_point
-            left_point = line[-2]
-            a_right_point = a_left_point
-            a_left_point = a_line[-2]
-
-        elif is_arg_jump(a_right_point, a_line[-1]) == 1:
-
-            push = True
-            step = line[-1] - line[-2]
-
-            left_point = right_point
-            right_point = line[-1]
-            a_left_point = a_right_point
-            a_right_point = a_line[-1]
-
-        else:
-            if np.absolute(step) < eps_stop:
-                print("[find_one_eigenvalue_pjt]: Dest found")
-                end = True
-            else:
-                step /= 2.
-
-            if np.absolute(step) < 1e-10:
-                print("[find_one_eigenvalue_pjt] Error: Step less than 10^-10")
-                break
-
-        if push:
-            line.append(left_point)
-            line.append(right_point)
-            a_line.append(a_left_point)
-            a_line.append(a_right_point)
-
-    left_point, right_point = fit_phase_jump(xi_cont, a_xi, line[-2], line[-1], accuracy=eps_stop)
-    line.append(left_point)
-    line.append(right_point)
-
-    eigenvalue = (line[-1] + line[-2]) / 2.
-    return eigenvalue
-
-
-def find_one_eigenvalue_pjt(q, t, func, func_args, xi_first, xi_second):
-    eps_stop = 1e-8
-    dt = t[1] - t[0]
-
-    # xi_first, xi_second = fit_phase_jump(q, dt, func, func_args, xi_first, xi_second, accuracy=1e-2)
-
-    delta_step = np.absolute(xi_first - xi_second)
-    line = [xi_first, xi_second]
-    a_line = []
-
-    res_temp = nsev(q, t, M=2, Xi1=xi_first, Xi2=xi_second, kappa=1, cst=1, dst=2)
-    a_res_temp = res_temp['cont_a']
-    a_line.append(a_res_temp[0])
-    a_line.append(a_res_temp[1])
-
-    step = complex(0., delta_step)
-
-    end = False
-    while not end:
-
-        right_point = line[-1] + step
-        left_point = line[-2] + step
-        # print(right_point, left_point)
-
-        a_right_point = func(q, dt, right_point, func_args[0], func_args[1])
-        a_left_point = func(q, dt, left_point, func_args[0], func_args[1])
-
-        push = False
-        if is_arg_jump(a_left_point, a_right_point) == 1:
-
-            push = True
-            step = left_point - line[-2]
-
-        elif is_arg_jump(a_left_point, a_line[-2]) == 1:
-
-            push = True
-            step = line[-2] - line[-1]
-
-            right_point = left_point
-            left_point = line[-2]
-            a_right_point = a_left_point
-            a_left_point = a_line[-2]
-
-        elif is_arg_jump(a_right_point, a_line[-1]) == 1:
-
-            push = True
-            step = line[-1] - line[-2]
-
-            left_point = right_point
-            right_point = line[-1]
-            a_left_point = a_right_point
-            a_right_point = a_line[-1]
-
-        else:
-            if np.absolute(step) < eps_stop:
-                print("[find_one_eigenvalue_pjt]: Dest found")
-                end = True
-            else:
-                step /= 2.
-
-            if np.absolute(step) < 1e-10:
-                print("[find_one_eigenvalue_pjt] Error: Step less than 10^-10")
-                break
-
-        if push:
-            line.append(left_point)
-            line.append(right_point)
-            a_line.append(a_left_point)
-            a_line.append(a_right_point)
-
-    left_point, right_point = fit_phase_jump(q, dt, func, func_args, line[-2], line[-1], accuracy=eps_stop)
-    line.append(left_point)
-    line.append(right_point)
-
-    eigenvalue = (line[-1] + line[-2]) / 2.
-    return eigenvalue
-
-
-def find_spectrum_pjt_cauchy(q, t, xi_cont, a_xi):
-    print("--------------- start PJT ---------------")
-
-    spectrum = []
-    time_found = []
-    total_phase_shift, error_code, jump = get_contour_phase_shift_adaptive(q, t, xi_cont, a_xi)
-    if error_code != 0:
-        print("[find_spectrum_pjt] Error: problem with jump localisation")
-        return -1
-    total_discr = round(total_phase_shift / (2. * np.pi))
-    n_jump = len(jump)
-    print("Number of discrete eigenvalues:", total_discr)
-    print("Number of jumps:", n_jump)
-    if n_jump != total_discr:
-        print("[find_spectrum_pjt] Error: problem with jump cleaning")
-        return -2
-
-    for i in range(n_jump):
-        t_start = time.time()
-        spectrum.append(find_one_eigenvalue_pjt(q, t, xi_cont, a_xi, jump[i]['xi'], jump[i]['xi_next']))
-        t_end = time.time()
-        time_found.append(t_end - t_start)
-
-    print("--------------- end PJT ---------------")
-
-    table = PrettyTable()
-    table.field_names = ["n", "eigenvalue", "time, s"]
-
-    soliton_energy = 0.0
-    for i in range(len(spectrum)):
-        table.add_row([i, spectrum[i], time_found[i]])
-        soliton_energy += 4. * spectrum[i].imag
-
-    table.add_row(["-", "-", "-"])
-    table.add_row(["E", soliton_energy, ""])
-
-    print(table)
-
-    return spectrum
-
-
-def find_spectrum_pjt(q, t, func, func_args, xi_cont, a_xi):
-    print("--------------- start PJT ---------------")
-
-    spectrum = []
-    time_found = []
-    total_phase_shift, error_code, jump = get_contour_phase_shift_adaptive(q, t, xi_cont, a_xi)
-    if error_code != 0:
-        print("[find_spectrum_pjt] Error: problem with jump localisation")
-        return -1
-    total_discr = round(total_phase_shift / (2. * np.pi))
-    n_jump = len(jump)
-    print("Number of discrete eigenvalues:", total_discr)
-    print("Number of jumps:", n_jump)
-    if n_jump != total_discr:
-        print("[find_spectrum_pjt] Error: problem with jump cleaning")
-        return -2
-
-    for i in range(n_jump):
-        t_start = time.time()
-        spectrum.append(find_one_eigenvalue_pjt(q, t, func, func_args, jump[i]['xi'], jump[i]['xi_next']))
-        t_end = time.time()
-        time_found.append(t_end - t_start)
-
-    print("--------------- end PJT ---------------")
-
-    table = PrettyTable()
-    table.field_names = ["n", "eigenvalue", "time, s"]
-
-    soliton_energy = 0.0
-    for i in range(len(spectrum)):
-        table.add_row([i, spectrum[i], time_found[i]])
-        soliton_energy += 4. * spectrum[i].imag
-
-    table.add_row(["-", "-", "-"])
-    table.add_row(["E", soliton_energy, ""])
-
-    print(table)
-
-    return spectrum
 
 
 def make_dtib(q, t, sign):
@@ -533,6 +282,28 @@ def make_itib_other(omega, t, sigma=1):
     return q
 
 
+def make_itib_from_scattering(r, xi, rd, xi_d, t, print_sys_message=False):
+
+    coef_t = 2.0
+
+    start_time = datetime.now()
+    omega_r = get_omega_continuous(r, xi, coef_t * t)
+    if print_sys_message:
+        print_calc_time(start_time, 'continuous part of z-chirp')
+
+    start_time = datetime.now()
+    omega_d = get_omega_discrete(rd, xi_d, coef_t * t)
+    if print_sys_message:
+        print_calc_time(start_time, 'discrete part of z-chirp')
+
+    start_time = datetime.now()
+    q_tib = make_itib(omega_d + omega_r, coef_t * t)
+    if print_sys_message:
+        print_calc_time(start_time, 'TIB')
+
+    return q_tib
+
+
 def do_bi_direct(q, t, xi, type='orig'):
     """
     Bi-directional algorithm to calculate residues and norming constants for one discrete spectrum point
@@ -544,9 +315,11 @@ def do_bi_direct(q, t, xi, type='orig'):
         type: type of calculation scheme
 
     Returns:
-        b: b-coefficient (norming constant)
-        r: r-coefficient (residue)
-        ad: derivative of a-coefficient in point xi
+        b, b / ad, ad
+
+        - b -- b-coefficient (norming constant)
+        - r -- r-coefficient (residue)
+        - ad -- derivative of a-coefficient in point xi
 
     """
     # warnings.filterwarnings("error")
@@ -634,6 +407,11 @@ def do_bi_direct_array(q, t, xi, type='orig'):
         xi: array of spectral parameters where we calculate b(xi) (r(xi))
         type: type of calculation scheme
 
+            - 'orig' -- Ablowitz-Ladik scheme
+            - 'bo' -- Bofetta-Osborne
+            - 'tes4' -- TES4
+            - 'es4' -- ES4
+
     Returns:
         b: array of b-coefficients (norming constants)
         r: array of r-coefficient (residues)
@@ -653,7 +431,7 @@ def do_bi_direct_array(q, t, xi, type='orig'):
 def get_pauli_coefficients(m):
     """
     Calculate matrix decomposition coefficients into Pauli matrices
-    m = a0 * s0 + a1 * s1 + a2 * s2 + a3 * s3
+    ::math:`m = a_0 * \\sigma_0 + a_1 * \\sigma_1 + a_2 * \\sigma_2 + a3 * \\sigma_3`
 
     Args:
         m: 2x2 matrix
@@ -680,11 +458,12 @@ def get_pauli_coefficients(m):
 def expm_2x2(m):
     """
     Calculate exponential function of 2x2 matrix
+
     Args:
         m: 2x2 matrix
 
     Returns:
-        expm: exponential function of 2x2 matrix
+        exponential function of 2x2 matrix
 
     """
     # Exponential of matrix
@@ -833,10 +612,10 @@ def get_transfer_matrix(q, dt, n, xi, type='bo', sigma=1):
     return t_matrix
 
 
-
 def get_scattering(q, t, xi, type='bo', sigma=1):
     """
     Calculate scattering coefficients with transfer matrices for signal q and spectral parameter xi
+
     Args:
         q: signal points in time grid
         t: time grid
@@ -846,18 +625,25 @@ def get_scattering(q, t, xi, type='bo', sigma=1):
         type: type of calculation, default = 'bo' -- Bofetta-Osborne
 
             - bo -- Bofetta-Osborne
-            - bod -- Bofetta-Osborne with da / dxi
+            - bod -- Bofetta-Osborne with :math:`\\partial a(\\xi) / \\partial \\xi`
             - tes4 -- TES4
-            - tes4d -- TES4 with da / dxi
+            - tes4d -- TES4 with :math:`\\partial a(\\xi) / \\partial \\xi`
             - es4 -- ES4
-            - es4d -- ES4 with da / dxi
+            - es4d -- ES4 with :math:`\\partial a(\\xi) / \\partial \\xi`
 
         sigma: defines focusing (+1) and defocusing (-1) cases
 
     Returns:
-        a: coefficient a(xi)
-        b: coefficient b(xi)
-        ad: derivative da(xi) / dxi, optional
+        (a, b) or (a, b, ad) for 'bod', 'tes4d' and 'es4d'
+
+        - a -- coefficient :math:`a(\\xi)`
+        - b -- coefficient :math:`b(\\xi)`
+        - ad -- derivative :math:`\\partial a(\\xi) / \\partial \\xi`, optional
+
+    Examples:
+        >>>
+        >>> get_scattering(q, t, xi, type='bo', sigma=1)
+
 
     """
     # We use grid t_n = -t_span / 2. - dt / 2 + dt * n
@@ -920,11 +706,9 @@ def get_scattering_array(q, t, xi, type='bo', sigma=1):
             sigma: defines focusing (+1) and defocusing (-1) cases
 
         Returns:
-            a: array of coefficients a(xi)
-            b: array of coefficients b(xi)
-            ad: array of derivatives da(xi) / dxi, optional
+            Arrays of scattering coefficients (a, b) or (a, b, ad)
 
-        """
+    """
     n_xi = len(xi)
     a = np.zeros(n_xi, dtype=complex)
     b = np.zeros(n_xi, dtype=complex)
@@ -1058,15 +842,17 @@ def test_nft(ampl, chirp, t_span, n_t, n_grid, type='bo', fnft_type=11, plot_fla
 
 def get_omega_continuous(r, xi, t):
     """
-    Calculate kernel of spectrum coefficient r(xi).
-    For xi on real axe it corresponds to continuous spectrum part.
-    Args:
-        r: spectrum coefficient r in spectral points xi
-        xi: spectral points
-        t: time grid
+        Calculate kernel of spectrum coefficient r(xi).
+        For xi on real axe it corresponds to continuous spectrum part.
+        :math:`\\int r(\\xi) e^{i \\xi t} dt`
 
-    Returns:
-        kernel function
+        Args:
+            r: spectrum coefficient r in spectral points xi
+            xi: spectral points
+            t: time grid
+
+        Returns:
+            kernel function
 
     """
     d_xi = xi[1] - xi[0]
@@ -1085,6 +871,7 @@ def get_omega_continuous(r, xi, t):
 def get_omega_discrete(r, xi, t):
     """
         Calculate kernel of spectrum coefficients r_n(xi_n) for discrete spectrum.
+
         Args:
             r: spectrum coefficient r_n in discrete spectrum points xi_n
             xi: discrete spectrum points
@@ -1140,10 +927,10 @@ def get_roots_contour(q, t, contour, type='bo', a_coefficients=None, ad_coeffici
 
 
 def make_dbp_nft_two_intervals(q_small, t_small, q_big, t_big, z_back, xi_upsampling_small=1, xi_upsampling_big=1,
-                               fnft_type_small=11, fnft_type_big=11, inverse_type='both',
+                               fnft_type_small=0, fnft_type_big=0, inverse_type='both',
                                print_sys_message=False):
     """
-    Test function, not yet implemented.
+    Test function. Do not use it in this version.
 
     Args:
         q_small:
@@ -1253,9 +1040,9 @@ def make_dbp_nft_two_intervals(q_small, t_small, q_big, t_big, z_back, xi_upsamp
             'q_fnft': q_fnft}
 
 
-def make_dbp_nft(q, t, z_back, xi_upsampling=1, inverse_type='both', fnft_type=11, print_sys_message=False):
+def make_dbp_fnft(q, t, z_back, xi_upsampling=1, inverse_type='both', fnft_type=11, print_sys_message=False):
     """
-    Perform NFT backpropagation.
+    Perform NFT backpropagation with FNFT for forward and FNFT/TIB for inverse transform
 
     Args:
         q: signal at spatial point z
@@ -1313,7 +1100,6 @@ def make_dbp_nft(q, t, z_back, xi_upsampling=1, inverse_type='both', fnft_type=1
     b = res['cont_b']
     xi_d = res['bound_states']
     ad = bd / rd
-
 
     if print_sys_message:
         print('Number of discrete eigenvalues:', len(xi_d))
@@ -1410,8 +1196,160 @@ def make_dbp_nft(q, t, z_back, xi_upsampling=1, inverse_type='both', fnft_type=1
     # other idea is to play with coef_t, it can numerically give some gain, but I did not try it yet
 
 
-def make_dnft(q, t, xi_upsampling=1, fnft_type=11, print_sys_message=False):
+def make_dbp_nft(q, t, z_back, xi_upsampling=1,
+                 forward_continuous_type='fnft',
+                 forward_discrete_type='fnft',
+                 forward_discrete_coef_type='fnftpoly',
+                 inverse_type='both',
+                 fnft_type=0, nft_type='bo',
+                 use_contour=False, n_discrete_skip=10,
+                 print_sys_message=False):
+    """
+    Perform NFT backpropagation.
 
+    Args:
+        q: signal at spatial point z
+        t: time grid for signal
+        z_back: propagation distance z in dimensionless units
+        xi_upsampling: upsampling parameter for continuous nonlinear spectrum. len(xi) = xi_upsampling * len(q)
+        forward_continuous_type: type of calculation of continuous spectrum for forward NFT
+
+            - 'fnft' -- use FNFT to calculate continuous spectrum (real axe only!)
+            - 'fnftpoly' -- use polynomials from FNFT to calculate continuous spectrum (arbitrary contour)
+            - 'slow' -- use transfer matrices to calculate continuous spectrum (arbitrary contour)
+
+        forward_discrete_type:
+
+            - 'fnft' -- use FNFT to calculate discrete spectrum points (coefficients calculated automatically)
+            - 'pjt' -- use PJT (phase jump tracking)
+            - 'roots' -- not implemented (other procedures to find polynomial roots -> discrete spectrum points)
+
+        forward_discrete_coef_type:
+
+            - 'fnftpoly' -- use polynomial from FNFT to calculate spectral coefficients (b-coefficient is not stable for eigenvalues with bit imaginary part)
+            - 'bi-direct' -- use bi-directional algorithm (more stable for b-coefficient)
+
+        inverse_type: type for inverse NFT, default = 'both'
+
+            - 'both' -- both fnft (layer peeling with Darboux) and iTIB method
+            - 'fnft' -- fnft method (layer peeling with Darboux)
+            - 'tib' -- iTIB method, combination for left and right problems
+
+        fnft_type: type of FNFT calculation, default = 0
+        nft_type: default = 'bo', type of NFT transfer matricies for slow methods and bi-directional algorithm
+        use_contour: default = False, use arbitrary spectral contour in spectral space
+        n_discrete_skip: default = 10. If we use contour, how much discrete points rest
+        print_sys_message: print additional messages during calculation, default = False
+
+    Returns:
+        Dictionary with calculated signals in defined spatial point (-z_back)
+            - 'q_total' -- signal calculated with iTIB (combined left and right)
+            - 'q_tib_left' -- signal calculated with iTIB (left)
+            - 'q_tib_right' -- signal calculated with iTIB (right)
+            - 'q_fnft' -- signal calculated with fnft
+            -  xi_d' -- discrete spectrum points
+            - 'xi' -- spectral points
+            - 'b_prop' -- b-coefficients with corresponding propagated phase
+            - 'a' -- a-coefficient
+            - 'bd_prop' -- b-coefficient with corresponding propagated phase for discrete spectrum
+            - 'ad' -- :math:`\\partial a(\\xi) / \\partial \\xi` in discrete spectrum points :math:`\\xi_n`
+
+    """
+    # be careful, z_back is the distance for backward propagation
+    # to make forward use -z_back
+
+    # define xi grid
+    n_t = len(t)
+    dt = t[1] - t[0]
+    t_span = t[-1] - t[0]
+    # print(t_span, dt * (n_t - 1))
+
+    n_xi = xi_upsampling * n_t
+
+    rv, xi_val = nsev_inverse_xi_wrapper(n_t, t[0], t[-1], n_xi)
+    xi = xi_val[0] + np.arange(n_xi) * (xi_val[1] - xi_val[0]) / (n_xi - 1)
+    xi_span = xi_val[1] - xi_val[0]
+
+    # if we want to use root finding procedure for polynomial, we should calculate coefficients
+    res_poly = None
+    if forward_continuous_type == 'fnftpoly' or forward_discrete_coef_type == 'fnftpoly':
+        res_poly = nsev_poly(q, t, dis=fnft_type)
+
+    # here we calculate discrete spectrum
+    res_discr = get_discrete_eigenvalues(q, t, type=forward_discrete_type, xi_upsampling=xi_upsampling,
+                                         max_discrete_points=2048, res_poly=res_poly)
+    xi_d = res_discr['discrete_spectrum']
+
+    if forward_discrete_type == 'fnft':  # norming constants and residues already calculated
+        bd = res_discr['disc_norm']
+        rd = res_discr['disc_res']
+        ad = bd / rd
+
+    if (forward_discrete_type == 'fnft' and forward_discrete_coef_type != 'fnft') or forward_discrete_type != 'fnft':
+        # we have to calculate coefficients
+        # even if we have already calculated with fnft but want use other type of calculation of coefficients
+        res_discr_coef = get_discrete_spectrum_coefficients(q, t, xi_d, type=forward_discrete_coef_type,
+                                                            type_coef='orig', fnft_type=fnft_type, res_poly=res_poly)
+        bd = res_discr_coef['bd']
+        rd = res_discr_coef['rd']
+        ad = res_discr_coef['ad']
+
+    if use_contour:  # find suitable contour for calculation of continuous spectrum
+        xi_d, bd, rd, ad, xi = get_cut_spectrum_and_contour(xi_d, bd, ad, rd, n_discrete_skip, xi_span, n_xi)
+
+    res_cont = get_continuous_spectrum(q, t, xi=xi, type=forward_continuous_type, xi_upsampling=xi_upsampling,
+                                       fnft_type=fnft_type, nft_type=nft_type,
+                                       res_poly=res_poly, coefficient_type='both')
+
+    a = res_cont['a']
+    b = res_cont['b']
+    b_right = res_cont['b_right']
+
+    if print_sys_message:
+        print('Number of discrete eigenvalues:', len(xi_d))
+
+
+    # in dimensionless units we have
+    # beta2 = -1.0
+    # gamma = 1.0
+
+    b_prop = b * np.exp(-2. * 1.0j * z_back * np.power(xi, 2))
+    b_prop_right = b_right * np.exp(2. * 1.0j * z_back * np.power(xi, 2))
+    bd_prop = bd * np.exp(-2. * 1.0j * z_back * np.power(xi_d, 2))
+    # bd_prop_left = np.conj(b_prop)
+
+    q_tib_total = []
+    q_left_part = []
+    q_right_part = []
+    # restore right q part with itib
+    if inverse_type == 'tib' or inverse_type == 'both':
+
+        q_right_part = make_itib_from_scattering(b_prop / a, xi, bd_prop / ad, xi_d, t, print_sys_message)
+        # restore left q part with itib
+        q_left_part = make_itib_from_scattering(b_prop_right / a, xi, 1.0 / bd_prop / ad, xi_d, t, print_sys_message)
+        # combine left and right parts
+        q_tib_total = np.concatenate((q_left_part[:len(t) // 2], np.conj(q_right_part[:len(t) // 2][::-1])))
+
+    q_fnft = []
+    # additionally we restore signal with inverse fnft
+    if inverse_type == 'fnft' or inverse_type == 'both':
+        res = nsev_inverse(xi, t, b_prop, xi_d, bd_prop / ad, cst=1, dst=0, dis=fnft_type)
+        q_fnft = res['q']
+
+    # if it will be required, one could return any other parameters
+    return {'q_total': q_tib_total,
+            'q_tib_left': q_left_part,
+            'q_tib_right': np.conj(q_right_part[::-1]),
+            'q_fnft': q_fnft,
+            'xi_d': xi_d,
+            'xi': xi,
+            'b_prop': b_prop,
+            'a': a,
+            'bd_prop': bd_prop,
+            'ad': ad}
+
+
+def make_dnft(q, t, xi_upsampling=1, fnft_type=0, print_sys_message=False):
     # define xi grid
     n_t = len(t)
     dt = t[1] - t[0]
@@ -1459,513 +1397,627 @@ def make_dnft(q, t, xi_upsampling=1, fnft_type=11, print_sys_message=False):
     return result
 
 
-def get_continuous_spectrum(q, t, xi, type=''):
-    ...
+def get_continuous_spectrum(q, t, xi=None, type='fnft', xi_upsampling=1, fnft_type=0, nft_type='bo',
+                            res_poly=None, coefficient_type='left'):
+    """
+
+    Args:
+        q: signal on time grid q(t_n)
+        t: time grid
+        xi: default = None, array of spectral points xi
+        type: calculation type
+
+            - 'fnft' -- calculate continuous spectrum on real axe via FNFT methods, fnft_type defines FNFT method
+            - 'fnftpoly' -- calculate continuous spectrum on arbitrary axe using polynomial from FNFT, fnft_type defines FNFT method
+            - 'slow' -- slow methods, defined by nft_type
+
+        xi_upsampling: upsampling factor for number of points in spectral space.
+        fnft_type: type of FNFT calculation
+        nft_type: type of slow calculation
+        res_poly: default = None. If result for FNFT for nsev_poly has been calculated before, we can use it
+        coefficient_type: default = 'left'. Type of scattering problem. Left problem corresponds to Jost function starts from the left of time (-infty)
+
+    Returns:
+
+    """
+    n_t = len(t)
+    dt = t[1] - t[0]
+    # t_span = t[-1] - t[0]
+
+    if xi is None:
+        n_xi = xi_upsampling * n_t
+        rv, xi_val = nsev_inverse_xi_wrapper(n_t, t[0], t[-1], n_xi)
+        xi = xi_val[0] + np.arange(n_xi) * (xi_val[1] - xi_val[0]) / (n_xi - 1)
+
+    n_xi = len(xi)
+
+    # define zero arrays
+    a = np.zeros(n_xi, dtype=complex)
+    b = np.zeros(n_xi, dtype=complex)
+    r = np.zeros(n_xi, dtype=complex)
+    b_right = np.zeros(n_xi, dtype=complex)
+    r_right = np.zeros(n_xi, dtype=complex)
+
+    if type == 'fnft':
+        # make direct nft
+        # this calculate only continuous spectrum on real xi axe
+        # to calculate continuous spectrum on an arbitrary contour use 'fnftpoly'
+        res = nsev(q, t, xi[0], xi[-1], n_xi, dst=3, cst=2,
+                   dis=fnft_type)  # dst=3 -- skip discrete spectrum calculation
+
+        if res['return_value'] != 0:
+            print('[get_continuous_spectrum] Error: fnft failed!')
+
+        else:
+
+            r = res['cont_ref']
+            a = res['cont_a']
+            b = res['cont_b']
+            b_right = np.conj(b)
+            r_right = b_right / a
+
+    elif type == 'fnftpoly':
+
+        if res_poly is None:
+            res_poly = nsev_poly(q, t, dis=fnft_type)
+        a_coef = res_poly['coef_a']
+        b_coef = res_poly['coef_b']
+        ampl_scale = res_poly['ampl_scale']
+        deg = res_poly['deg']
+        deg1step = res_poly['deg1step']
+        deg1step_denom = res_poly['deg1step_denom']
+        phase_a = res_poly['phase_a']  # has to be 0
+        phase_b = res_poly['phase_b']
+
+        # transform for spectral parameter z = e ^ (1j * xi * dt)
+        z = np.exp(2j * xi / (deg1step - 2 * deg1step_denom) * dt)
+
+        a = np.polyval(ampl_scale * a_coef, z) * np.exp(1j * xi * phase_a)
+
+        if coefficient_type == 'left' or coefficient_type == 'both':
+            b = np.polyval(ampl_scale * b_coef, z) * np.exp(1j * xi * phase_b)
+            if fnft_type == 49 or fnft_type == 50:  # for Suzuki schemes we have additional multiplication
+                a = a * z ** (-2 * n_t)
+                b = b * z ** (-2 * n_t)
+            r = b / a
+
+        # TODO: check sign for right part in phase and suzuki scheme
+        if coefficient_type == 'right' or coefficient_type == 'both':
+            b_right = np.polyval(ampl_scale * np.conj(b_coef[::-1]), z) * np.exp(-1j * xi * phase_b)
+            if fnft_type == 49 or fnft_type == 50:  # for Suzuki schemes we have additional multiplication
+                a = a * z ** (-2 * n_t)
+                b_right = b_right * z ** (2 * n_t)
+            r_right = b_right / a
+
+    elif type == 'slow':
+
+        a, b = get_scattering_array(q, t, xi, type=nft_type)
+        r = b / a
+
+    else:
+        print('[get_continuous_spectrum] Error: wrong type')
+
+    return {'a': a, 'b': b, 'r': r, 'b_right': b_right, 'r_right': r_right}
 
 
-def get_discrete_eigenvalues(q, t, type=''):
+def get_discrete_eigenvalues(q, t, type='fnft', xi_upsampling=1, max_discrete_points=1024, a_cont=None, res_poly=None):
+    """
+    Calculates discrete spectrum points.
+
+    Args:
+        q: signal
+        t: time grid
+        type: type of calculation
+
+            - 'fnft' -- fnft method for calculating discrete eigenvalues. Additionally, returns norming constants and residues
+            - 'pjt' -- Phase Jump Tracking method
+
+        xi_upsampling: upsampling factor to FNFT method, default = 1
+        max_discrete_points: number of maximum discrete points to calculate, default = 1024
+        a_cont: pre-computed a-coefficient for PJT method to accelerate calculations, default = None
+
+    Returns:
+        Dictionary with discrete spectrum points and additional info
+
+        - 'return_fnft' --  return of FNFT method (errors) (only for type='fnft')
+        - 'disc_norm' -- norming constants for discrete spectrum (only for type='fnft')
+        - 'disc_res' -- residues for discrete spectrum (only for type='fnft')
+
+    Note:
+        For type='fnft' it uses fnft_type=0 -- MODAL (AL) scheme
+    """
     # types: fnft, pjt
+
+    result = {}
     discrete_spectrum = []
+
+    n_t = len(t)
+
     if type == 'fnft':
 
+        n_xi = n_t * xi_upsampling
         rv, xi_val = nsev_inverse_xi_wrapper(n_t, t[0], t[-1], n_xi)
         xi = xi_val[0] + np.arange(n_xi) * (xi_val[1] - xi_val[0]) / (n_xi - 1)
 
         # make direct nft
         # res = nsev(q, t, xi[0], xi[-1], n_xi, dst=2, cst=2, dis=19)
-        res = nsev(q, t, xi[0], xi[-1], n_xi, dst=2, cst=2, dis=fnft_type, K=1024)
+        fnft_type = 0  # MODAL -- AL scheme from FNFT
+        res = nsev(q, t, xi[0], xi[-1], n_xi, dst=2, cst=3, dis=fnft_type, niter=50, K=max_discrete_points)
+        discrete_spectrum = res['bound_states']
+        result['return_fnft'] = res['return_value']
+        result['disc_norm'] = res['disc_norm']
+        result['disc_res'] = res['disc_res']
 
     elif type == 'pjt':
+        if a_cont is None:
+            a_cont = np.zeros(1, dtype=complex)
+            n_xi = 0
+        else:
+            n_xi = len(a_cont)
+
+        discrete_spectrum = np.array(pjt(n_t, q, t[0], t[-1] + (t[-1] - t[0]) / n_t, n_xi, a_cont, omp_num_threads=8))
+
+    elif type == 'roots':
+        # here you can write additional function which return roots of polynomial
+        # res_poly contain polynomial coefficients
+        if res_poly is not None:
+            a_poly_coef = res_poly['cont_a']
         ...
+
     else:
         print('[get_discrete_eigenvalues]: wrong type parameter')
 
-    return discrete_spectrum
-
-
-def get_discrete_spectrum(q, t, type_eigen='', type_coef=''):
-    ...
-
-
-# Igor's pjt method
-
-
-@dataclass
-class PhaseBreakpoint:
-    first: complex
-    second: complex
-    orientation: float
-    derivative_sign: float
-    index: int
-
-
-@dataclass
-class SpectralPoint:
-    point: complex
-    a: complex
-    ad: complex
-    phase: float
-    ad_calculated: bool = False
-
-
-@dataclass
-class Track:
-    left: SpectralPoint
-    right: SpectralPoint
-    step: complex
-    orientation: float
-
-
-def get_spectral_point(xi, q, t, type='bo'):
-    if type[-1] == 'd':
-        a, _, ad = get_scattering(q, t, xi, type)
-        p = SpectralPoint(xi, a, ad, np.angle(a), True)
-    else:
-        a, _ = get_scattering(q, t, xi, type)
-        p = SpectralPoint(xi, a, 0.0, np.angle(a), False)
-
-    return p
-
-
-def compute_orientation_breakpoint(left, right):
-    result = -1
-    temp = right - left
-    if np.real(temp) > 0 and abs(np.imag(temp)) < 1e-15:
-        result = 0
-    elif np.imag(temp) > 0 and abs(np.real(temp)) < 1e-15:
-        result = 1
-    elif np.real(temp) < 0 and abs(np.imag(temp)) < 1e-15:
-        result = 2
-    elif np.imag(temp) < 0 and abs(np.real(temp)) < 1e-15:
-        result = 3
+    result['discrete_spectrum'] = discrete_spectrum
 
     return result
 
 
-def determine_phase_breakpoints(contour, a_values, print_sys_message=False):
-    # find where phase of a coefficient have a phase jump
+def get_discrete_spectrum(q, t, type_eigen='fnft', type_coef='orig'):
+    """
+    Calculate discrete spectrum for given signal q(t) and spectral coefficients for it
 
-    phase_breakpoints = []
+    Args:
+        q: signal points on time grid t
+        t: time grid points
+        type_eigen: type of eigenvalue calculation
 
-    n_contour = len(contour)
+            - 'fnft' -- calculate spectrum via FNFT methods
+            - 'pjt' -- PJT algorithm
 
-    arg_prev = np.angle(a_values[-1])
-    arg_values = [arg_prev]
+        type_coef: type of scattering algorithm for bi-directional algorithm (if type='bi-direct')
 
-    for i in range(n_contour):
-        arg_current = np.angle(a_values[i])
+            - 'orig' -- Ablowitz-Ladik scheme
+            - 'bo' -- Bofetta-Osborne
+            - 'tes4' -- TES4
+            - 'es4' -- ES4
 
-        if check_jump(arg_prev, arg_current):
-            arg_values = np.sort(arg_values)
+    Returns:
+        Discrete spectrum points and scaterring coefficients
 
-            break_point = PhaseBreakpoint(contour[(i - 1 + n_contour) % n_contour], contour[i],
-                                          0, float(arg_prev > 0), i)
+        {'spectrum': spectrum,
+        'bd': bd,
+        'rd': rd,
+        'ad': ad}
 
-            break_point.orientation = compute_orientation_breakpoint(break_point.first, break_point.second)
+    """
+    xi_upsampling = 1
+    if type_eigen == 'fnft':
+        xi_upsampling = 4
 
-            phase_breakpoints = phase_breakpoints + [break_point]
-            arg_values = []  # TODO: check it
+    res_discr = get_discrete_eigenvalues(q, t, type=type_eigen, xi_upsampling=xi_upsampling)
+    spectrum = res_discr['discrete_spectrum']
 
-            if print_sys_message:
-                print('jump found!', contour[(i - 1 + n_contour) % n_contour], contour[i],
-                      ', orientation:', break_point.orientation)
-
-        arg_values = arg_values + [np.angle(a_values[i])]
-        arg_prev = arg_current
-
-    return phase_breakpoints
-
-
-def extend_phase_breakpoints(phase_breakpoints, contour, a_values, max_arg_value=0.25):
-    # don't know yet
-
-    phase_breakpoints_extended = phase_breakpoints
-    phase_breakpoints_size = len(phase_breakpoints_extended)
-
-    if phase_breakpoints_size > 1:
-
-        for i in range(phase_breakpoints_size):
-            coef = 0.06
-            if phase_breakpoints_extended[i].orientation == 0:
-                coef = 0.03
-
-            # % TODO: check indecies
-            max_distance = coef * \
-            min(
-                abs(phase_breakpoints_extended[i].first -
-                    phase_breakpoints_extended[(i - 1 + phase_breakpoints_size) % phase_breakpoints_size].first),
-                abs(phase_breakpoints_extended[i].first -
-                    phase_breakpoints_extended[(i + 1) % phase_breakpoints_size].first))
-
-            n_contour = len(contour)
-
-            initial_break_point = phase_breakpoints_extended[i]
-
-            left_distance = 0
-            right_distance = 0
-
-            # % TODO: check indecies
-            for k in range(n_contour):
-                ind = (phase_breakpoints_extended[i].index + k + 1) % n_contour
-                if np.angle(a_values[ind]) < -max_arg_value and \
-                        compute_orientation_breakpoint(phase_breakpoints_extended[i].second,
-                                                       contour[ind]) == phase_breakpoints_extended[i].orientation and \
-                        abs(initial_break_point.second - contour[ind]) < max_distance:
-
-                    right_distance = abs(contour[ind] - initial_break_point.second)
-                else:
-                    break
-
-            for k in range(n_contour):
-                ind = (phase_breakpoints_extended[i].index - k - 2) % n_contour
-                if np.angle(a_values[ind]) > max_arg_value and \
-                        compute_orientation_breakpoint(contour[ind],
-                                                       phase_breakpoints_extended[i].first) == \
-                        phase_breakpoints_extended[i].orientation and \
-                        abs(initial_break_point.first - contour[ind]) < max_distance:
-
-                    left_distance = abs(contour[ind] - initial_break_point.first)
-                else:
-                    break
-
-            phase_breakpoints_extended[i].first = initial_break_point.first - min(left_distance, right_distance)
-            phase_breakpoints_extended[i].second = initial_break_point.second + min(left_distance, right_distance)
-
-    return phase_breakpoints_extended
-
-
-def get_rotation(orientation):
-    temp = np.exp(1.0j * (0.5 * np.pi + 2.0 * np.pi * orientation / 4.0))
-    return np.round(temp)
-
-
-def in_rectangle(point, start_point, end_point):
-    if point.real < start_point.real or point.real > end_point.real or \
-            point.imag < start_point.imag or point.imag > end_point.imag:
-        return False
+    if type_eigen == 'fnft':
+        bd = res_discr['disc_norm']
+        rd = res_discr['disc_res']
+        ad = bd / rd
+    elif type_eigen == 'pjt':
+        bd, rd, ad = do_bi_direct_array(q, t, spectrum, type=type_coef)
     else:
-        return True
+        print('[get_discrete_spectrum]: wrong type_eigen parameter')
+
+    result = {'spectrum': spectrum,
+              'bd': bd,
+              'rd': rd,
+              'ad': ad}
+
+    return result
 
 
-def check_jump(first, second):
-    # first and second is phases (angles)
-    return first > 0 and ((first * second) < 0 and abs(second - first) > 1.2 * np.pi)
+def get_discrete_spectrum_coefficients(q, t, discrete_points, type='bi-direct', type_coef='orig', fnft_type=0, res_poly=None):
+    """
+    Calculates spectral coefficients (::math:`r(\\xi_n)` and ::math:`b(\\xi_n)`) for given discrete spectrum points.
 
+    Args:
+        q: signal
+        t: time grid
+        discrete_points: discrete spectrum points for given signal
+        type: type of calculation
 
-def reduce(q, t, type, left_point, right_point, ad_log_abs, limit_value, part=0.5):
-    value = get_value_adaptive(left_point.point, right_point.point, ad_log_abs)
-    count = 0
+            - 'bi-direct' -- bi-directional algorithm
+            - 'fnftpoly' -- use polynomial from FNFT to calculate (unstable for b-coefficient)
 
-    new_border = right_point.point - part * (right_point.point - left_point.point)
+        type_coef: type of scattering algorithm for bi-directional algorithm (if type='bi-direct')
 
-    while value > limit_value and count < 10:
-        a_value, _, ad_value = get_scattering(q, t, new_border, type)
-        new_border_arg_value = np.angle(a_value)
+            - 'orig' -- Ablowitz-Ladik scheme
+            - 'bo' -- Bofetta-Osborne
+            - 'tes4' -- TES4
+            - 'es4' -- ES4
 
-        if count % 2 == 0:
-            if left_point.phase * new_border_arg_value <= 0:
-                right_point.point = new_border
-                right_point.a = a_value
+        fnft_type: type of FNFT calculation (if type='fnftpoly')
+        res_poly: default = None. Use precomputed results for type='fnftpoly'.
 
-            new_border = left_point.point + part * (right_point.point - left_point.point)
-        else:
-            if right_point.phase * new_border_arg_value <= 0:
-                left_point.point = new_border
-                left_point.a = a_value
+    Returns:
+        Dictionary with bd, rd, ad
 
-            new_border = right_point.point - part * (right_point.point - left_point.point)
+        {'bd': bd,
+        'rd': rd,
+        'ad': ad}
 
-        value = get_value_adaptive(left_point.point, right_point.point, ad_log_abs)
+    """
 
-        count = count + 1
+    bd = []
+    rd = []
+    ad = []
 
-    return left_point, right_point
+    if type == 'bi-direct':
+        bd, rd, ad = do_bi_direct_array(q, t, discrete_points, type=type_coef)
 
+    elif type == 'fnftpoly':
 
-def refine(q, t, type, left_point, right_point, step, limit_value, orientation, right_point_prev):
-    if right_point.ad_calculated:
-        ad_log_abs = np.log(abs(right_point.ad))
-    else:
-        ad_log_abs = get_ad_log_abs(orientation, left_point, right_point, right_point_prev)
+        n_t = len(t)
+        dt = t[1] - t[0]
 
-    value = get_value_adaptive(left_point.point, right_point.point, ad_log_abs)
+        if res_poly is None:
+            res_poly = nsev_poly(q, t, dis=fnft_type)
+        a_coef = res_poly['coef_a']
+        b_coef = res_poly['coef_b']
+        ampl_scale = res_poly['ampl_scale']
+        deg = res_poly['deg']
+        deg1step = res_poly['deg1step']
+        deg1step_denom = res_poly['deg1step_denom']
+        phase_a = res_poly['phase_a']
+        phase_b = res_poly['phase_b']
 
-    if value > limit_value:
-        [left_point, right_point] = reduce(q, t, type, left_point, right_point, ad_log_abs, limit_value, 0.12)
-        step = abs(right_point.point - left_point.point)
+        ad_coef = np.polyder(a_coef)
 
-    return left_point, right_point, step
+        # transform for spectral parameter z = e ^ (1j * xi * dt)
+        z = np.exp(2j * discrete_points / (deg1step - 2 * deg1step_denom) * dt)
 
+        # phase_a = 0 -> drop second part of the derivative
+        ad = np.polyval(ampl_scale * ad_coef, z) * z * (2j / (deg1step - 2 * deg1step_denom) * dt)
+        bd = np.polyval(ampl_scale * b_coef, z) * np.exp(1j * discrete_points * phase_b)
+        if fnft_type == 49 or fnft_type == 50:  # for Suzuki schemes we have additional multiplication
+            ad = ad * z ** (-2 * n_t) - 2 * n_t * z ** (-2 * n_t - 1) * np.polyval(ampl_scale * a_coef, z) \
+                 * z * (2j / (deg1step - 2 * deg1step_denom) * dt)
+            bd = bd * z ** (-2 * n_t)
 
-def get_ad_log_abs(orientation, left_point, right_point, right_point_prev):
-    if orientation == 0:
-        dfdx = (right_point.a - left_point.a) / np.real(right_point.point - left_point.point)
-        dfdy = (right_point.a - right_point_prev.a) / np.imag(right_point.point - right_point_prev.point)
-    elif orientation == 1:
-        dfdx = (right_point_prev.a - right_point.a) / np.real(right_point_prev.point - right_point.point)
-        dfdy = (right_point.a - left_point.a) / np.imag(right_point.point - left_point.point)
-    elif orientation == 2:
-        dfdx = (left_point.a - right_point.a) / np.real(left_point.point - right_point.point)
-        dfdy = (right_point_prev.a - right_point.a) / np.imag(right_point_prev.point - right_point.point)
-    else:
-        dfdx = (right_point.a - right_point_prev.a) / np.real(right_point.point - right_point_prev.point)
-        dfdy = (left_point.a - right_point.a) / np.imag(left_point.point - right_point.point)
-
-    dfdz = 0.5 * (dfdx - 1j * dfdy)
-    ad_log_abs = np.log(abs(dfdz))
-    return ad_log_abs
-
-
-def get_value_adaptive(left_point, right_point, ad_log_abs):
-    return min(ad_log_abs, -1.0) * abs(right_point - left_point)
-
-
-def track_to_line(track):
-    n_track = len(track)
-    track_line = np.zeros(2 * n_track, dtype=complex)
-    for n in range(n_track):
-        track_line[2 * n] = track[n].left.point
-        track_line[2 * n + 1] = track[n].right.point
-
-    return track_line
-
-
-def pjt_igor(q, t, start_point=None, end_point=None, contour=None, a_values=None, type='bo', print_sys_message=False):
-    if not (not (start_point is None or end_point is None) or not (contour is None or a_values is None)):
-        print("error: give some arguments please")
-        return [], []
-
-    t_span = t[-1] - t[0]
-    dt = t[1] - t[0]
-
-    if not (contour is None or a_values is None):
-        if print_sys_message:
-            print('contour and a_values are given.')
-        perimeter = np.sum(np.absolute(contour[1:] - contour[:len(contour) - 1])) + np.absolute(
-            contour[-1] - contour[0])
+        rd = bd / ad
 
     else:
-        if print_sys_message:
-            print('contour and a_values will be calculated.')
-
-        perimeter = 2.0 * (end_point.real - start_point.real + end_point.imag - start_point.imag)
-        d_xi_border = perimeter * 0.5 / 200  # hyperparameter
-
-        # find breakpoint at the boundary
-
-        d_xi = np.pi * 0.25 / t_span
-
-        n_real = round((end_point.real - start_point.real) / d_xi)
-        n_top = round((end_point.real - start_point.real) / d_xi_border)
-        n_vertical = round((end_point.imag - start_point.imag) / d_xi_border)
-        contour = get_rect(start_point, end_point, n_horizontal=n_real, n_top=n_top, n_vertical=n_vertical)
-
-        # compute a coefficient on border
-        t_start = time.time()
-        a_values, _ = get_scattering_array(q, t, contour, type)
-        t_end = time.time()
-
-        n_total = len(contour)  # total number of points in contour = n_real + n_top + 2 * (n_vertical - 1)
-
-        if print_sys_message:
-            print('Time to compute a_coef for contour:', t_end - t_start, 's. n_points =', n_total)
-
-    limit_value = perimeter / 80.0
-
-    # n_total = len(contour)  # total number of points in contour = n_real + n_top + 2 * (n_vertical - 1)
-
-    phase_breakpoints = determine_phase_breakpoints(contour, a_values, print_sys_message)
-    phase_breakpoints = extend_phase_breakpoints(phase_breakpoints, contour, a_values)
-    n_phase_breakpoints = len(phase_breakpoints)
-    discrete_spectrum = np.zeros(n_phase_breakpoints, dtype=complex)
-
-    if print_sys_message:
-        print('PJT found', n_phase_breakpoints, 'phase breakpoints')
-
-    track_lines = []
-
-    if n_phase_breakpoints != 0:
-        # main part to find track
-
-        for i in range(n_phase_breakpoints):
-
-            current = phase_breakpoints[i]
-            if (current.orientation == 0 and (current.second.real > end_point.real or
-                                              current.first.real > start_point.real) or
-                    current.derivative_sign <= 0):
-                continue
-
-            left_point_new = get_spectral_point(current.first, q, t, type)
-            right_point_new = get_spectral_point(current.second, q, t, type)
-
-            step = np.absolute(left_point_new.point - right_point_new.point)
-            initial_rotation = np.exp(1.0j * 2.0 * np.pi * current.orientation / 4.0)
-
-            # orientation of track:
-            # 0 - right, 1 - top, 2 - left, 3 - bottom
-
-            orientation = current.orientation
-
-            left_xi_new = 0.5 * (left_point_new.point + right_point_new.point - step * initial_rotation)
-            right_xi_new = 0.5 * (left_point_new.point + right_point_new.point + step * initial_rotation)
-
-            left_point_new = get_spectral_point(left_xi_new, q, t, type)
-            right_point_new = get_spectral_point(right_xi_new, q, t, type)
-
-            left_point = left_point_new
-            right_point = right_point_new
-
-            # probably unused
-            path_length = 0
-            step_number = 0
-
-            track = []
-
-            stop_condition = True
-
-            while stop_condition:
-
-                if len(track) > 30000:
-                    stop_condition = False
-                    print("[nft_analyse, pjt_igor] Error: track is too long!")
-
-                track_point = Track(left_point, right_point, step, orientation)
-                track = track + [track_point]
-
-                # Case of the intersection
-                track_size = len(track)
-                if track_size > 6:
-                    orientation_start = track[-6].orientation
-                    orientation_finish = track[-1].orientation
-
-                    if orientation_start == (orientation_finish - 1 + 4) % 4:
-
-                        if (
-                                orientation_start == track[-5].orientation and
-                                orientation_start == track[-4].orientation and
-                                orientation_start == track[-3].orientation and
-                                orientation_finish == track[-2].orientation or
-                                orientation_start == track[-5].orientation and
-                                orientation_start == track[-4].orientation and
-                                orientation_finish == track[-3].orientation and
-                                orientation_finish == track[-2].orientation or
-                                orientation_start == track[-7].orientation and
-                                orientation_finish == track[-5].orientation and
-                                orientation_start == track[-4].orientation and
-                                orientation_finish == track[-3].orientation and
-                                orientation_finish == track[-2].orientation
-                        ):
-                            counter = 1
-
-                            for k in range(1, 4):
-                                if orientation_finish == track[-k].orientation:
-                                    counter += 1
-
-                            orientation = (orientation_finish - 2) % 4
-                            rotation = get_rotation(orientation)
-
-                            left_point_suggested = get_spectral_point(track[-1].right.point + step * counter * rotation,
-                                                                      q, t, type)
-                            right_point_suggested = get_spectral_point(track[-1].left.point + step * counter * rotation,
-                                                                       q, t, type)
-
-                            if not np.isfinite(left_point_suggested.a) or not np.isfinite(right_point_suggested.a):
-                                stop_condition = 0
-                                continue
-
-                            if left_point_suggested.phase * right_point_suggested.phase < 0:
-                                left_point = left_point_suggested
-                                right_point = right_point_suggested
-
-                                track_point = Track(left_point, right_point, -step, orientation)
-                                track = track + [track_point]
-
-                is_refine = True
-                calculate_derivative = False  # delete it, we determine it in type
-
-                left_point_prev = left_point
-                right_point_prev = right_point
-
-                rotation = get_rotation(orientation)
-
-                right_point_xi_new = right_point.point + step * rotation
-                left_point_xi_new = left_point.point + step * rotation
-
-                if not in_rectangle(right_point_xi_new, start_point, end_point) and \
-                        not in_rectangle(left_point_xi_new, start_point, end_point):
-                    stop_condition = False
-
-                right_point_new = get_spectral_point(right_point_xi_new, q, t, type)
-
-                if check_jump(right_point_new.phase, right_point.phase):
-                    right_point_prev = left_point
-                    left_point = right_point_new
-
-                    orientation = (orientation - 1 + 4) % 4
-
-                    path_length += step / np.sqrt(2)
-                    step_number += 1
-
-                else:
-                    left_point_new = get_spectral_point(left_point_xi_new, q, t, type)
-
-                    if check_jump(left_point_new.phase, right_point_new.phase) and stop_condition:
-                        left_point = left_point_new
-                        right_point = right_point_new
-
-                        path_length = path_length + step
-                        step_number = step_number + 1
-
-                    elif check_jump(left_point.phase, left_point_new.phase):
-                        left_point_prev = right_point
-                        right_point_prev = right_point_new
-                        right_point = left_point_new
-
-                        orientation = (orientation + 1) % 4
-
-                        path_length = path_length + step / np.sqrt(2)
-                        step_number += 1
-
-                    else:
-                        stop_condition = False
-
-                        track_point = Track(left_point_new, right_point_new, step, orientation)
-                        track = track + [track_point]
-
-                        probe_point = SpectralPoint(0.0j, 0.0j, 0.0j, 0.0)
-
-                        if len(track) > 2:
-                            probe_point.point = 0.25 * (
-                                    left_point.point + right_point.point + left_point_new.point + right_point_new.point)
-                        else:
-                            probe_point.point = 0.5 * (
-                                    left_point.point + right_point.point + 1j * end_point.imag * 1e-4)
-
-                        # TODO: check this part
-                        # track.emplace_back(probePoint, probePoint, 0, 0, 0, orientation);
-                        track_point = Track(probe_point, probe_point, 0, orientation)
-
-                        track = track + [track_point]
-                        if print_sys_message:
-                            print("Length = ", len(track))
-
-                        # h.discrete_spectrum(end + 1) = probe_point;
-                        discrete_spectrum[i] = probe_point.point
-
-                        # break_point_to_discrete_eigenvalue(i) = length(discrete_spectrum) - 1;
-
-                    if stop_condition:
-                        if is_refine:
-                            left_point, right_point, step = refine(q, t, type, left_point, right_point, step,
-                                                             limit_value, orientation, right_point_prev)
-
-            track_lines = track_lines + [track_to_line(track)]
-        # tracks{i} = track_to_line(track);
-        # plot(real(tracks{i}), imag(tracks{i}))
-
-    # refine_discrete_spectrum(h);
-
-    # disp("Discrete spectrum: " + string(discrete_spectrum));
-
-    print(discrete_spectrum)
-    return discrete_spectrum, track_lines
+        print('[get_discrete_spectrum_coefficients]: wrong type parameter')
+
+    return {'bd': bd,
+            'rd': rd,
+            'ad': ad}
+
+
+def get_spectral_contour(discrete_points, n_points_rest, xi_span, n_xi):
+
+    points_sorted = -1j * np.sort_complex(1j * np.array(discrete_points))
+    distances = np.imag(points_sorted[:n_points_rest + 1]) - np.imag(points_sorted[1:n_points_rest + 2])
+
+    # initially we use given number of points, but we will see next and previous distances to optimise
+    coef = 5.0  # if neighbour distances more than coef times bigger, chose that points
+    n_points_optimal = n_points_rest
+    if distances[n_points_rest - 2] / distances[n_points_rest - 1] > coef:
+        n_points_optimal = n_points_rest - 1
+    if distances[n_points_rest] / distances[n_points_rest - 1] > coef:
+        n_points_optimal = n_points_rest + 1
+
+    ampl = 0.5 * (np.imag(points_sorted[n_points_optimal] + points_sorted[n_points_optimal + 1]))
+
+    contour = get_raised_contour(ampl, xi_span, n_xi)
+    return contour, points_sorted[n_points_optimal]
+
+
+def get_cut_spectrum_and_contour(xi_d, bd, ad, rd, n_points_rest, xi_span, n_xi):
+
+    xi, xi_d_new = get_spectral_contour(xi_d, n_points_rest, xi_span, n_xi)
+    bd_new = []
+    ad_new = []
+    rd_new = []
+    for xi_cur in xi_d_new:
+        i_loc = np.where(xi_d == xi_cur)[0][0]
+        bd_new.append(bd[i_loc])
+        ad_new.append(ad[i_loc])
+        rd_new.append(rd[i_loc])
+
+    return xi_d_new, bd, rd, ad, xi
+
+
+# Not used
+
+# def find_one_eigenvalue_pjt_cauchy(q, t, xi_cont, a_xi, xi_first, xi_second):
+#     eps_stop = 1e-8
+#
+#     delta_step = np.absolute(xi_first - xi_second)
+#     line = [xi_first, xi_second]
+#     a_line = []
+#
+#     res_temp = nsev(q, t, M=2, Xi1=xi_first, Xi2=xi_second, kappa=1, cst=1, dst=2)
+#     a_res_temp = res_temp['cont_a']
+#     a_line.append(a_res_temp[0])
+#     a_line.append(a_res_temp[1])
+#
+#     step = complex(0., delta_step)
+#
+#     end = False
+#     while not end:
+#
+#         right_point = line[-1] + step
+#         left_point = line[-2] + step
+#
+#         a_right_point = get_a_cauchy(right_point, xi_cont, a_xi)
+#         a_left_point = get_a_cauchy(left_point, xi_cont, a_xi)
+#
+#         push = False
+#         if is_arg_jump(a_left_point, a_right_point) == 1:
+#
+#             push = True
+#             step = left_point - line[-2]
+#
+#         elif is_arg_jump(a_left_point, a_line[-2]) == 1:
+#
+#             push = True
+#             step = line[-2] - line[-1]
+#
+#             right_point = left_point
+#             left_point = line[-2]
+#             a_right_point = a_left_point
+#             a_left_point = a_line[-2]
+#
+#         elif is_arg_jump(a_right_point, a_line[-1]) == 1:
+#
+#             push = True
+#             step = line[-1] - line[-2]
+#
+#             left_point = right_point
+#             right_point = line[-1]
+#             a_left_point = a_right_point
+#             a_right_point = a_line[-1]
+#
+#         else:
+#             if np.absolute(step) < eps_stop:
+#                 print("[find_one_eigenvalue_pjt]: Dest found")
+#                 end = True
+#             else:
+#                 step /= 2.
+#
+#             if np.absolute(step) < 1e-10:
+#                 print("[find_one_eigenvalue_pjt] Error: Step less than 10^-10")
+#                 break
+#
+#         if push:
+#             line.append(left_point)
+#             line.append(right_point)
+#             a_line.append(a_left_point)
+#             a_line.append(a_right_point)
+#
+#     left_point, right_point = fit_phase_jump(xi_cont, a_xi, line[-2], line[-1], accuracy=eps_stop)
+#     line.append(left_point)
+#     line.append(right_point)
+#
+#     eigenvalue = (line[-1] + line[-2]) / 2.
+#     return eigenvalue
+#
+#
+# def find_one_eigenvalue_pjt(q, t, func, func_args, xi_first, xi_second):
+#     eps_stop = 1e-8
+#     dt = t[1] - t[0]
+#
+#     # xi_first, xi_second = fit_phase_jump(q, dt, func, func_args, xi_first, xi_second, accuracy=1e-2)
+#
+#     delta_step = np.absolute(xi_first - xi_second)
+#     line = [xi_first, xi_second]
+#     a_line = []
+#
+#     res_temp = nsev(q, t, M=2, Xi1=xi_first, Xi2=xi_second, kappa=1, cst=1, dst=2)
+#     a_res_temp = res_temp['cont_a']
+#     a_line.append(a_res_temp[0])
+#     a_line.append(a_res_temp[1])
+#
+#     step = complex(0., delta_step)
+#
+#     end = False
+#     while not end:
+#
+#         right_point = line[-1] + step
+#         left_point = line[-2] + step
+#         # print(right_point, left_point)
+#
+#         a_right_point = func(q, dt, right_point, func_args[0], func_args[1])
+#         a_left_point = func(q, dt, left_point, func_args[0], func_args[1])
+#
+#         push = False
+#         if is_arg_jump(a_left_point, a_right_point) == 1:
+#
+#             push = True
+#             step = left_point - line[-2]
+#
+#         elif is_arg_jump(a_left_point, a_line[-2]) == 1:
+#
+#             push = True
+#             step = line[-2] - line[-1]
+#
+#             right_point = left_point
+#             left_point = line[-2]
+#             a_right_point = a_left_point
+#             a_left_point = a_line[-2]
+#
+#         elif is_arg_jump(a_right_point, a_line[-1]) == 1:
+#
+#             push = True
+#             step = line[-1] - line[-2]
+#
+#             left_point = right_point
+#             right_point = line[-1]
+#             a_left_point = a_right_point
+#             a_right_point = a_line[-1]
+#
+#         else:
+#             if np.absolute(step) < eps_stop:
+#                 print("[find_one_eigenvalue_pjt]: Dest found")
+#                 end = True
+#             else:
+#                 step /= 2.
+#
+#             if np.absolute(step) < 1e-10:
+#                 print("[find_one_eigenvalue_pjt] Error: Step less than 10^-10")
+#                 break
+#
+#         if push:
+#             line.append(left_point)
+#             line.append(right_point)
+#             a_line.append(a_left_point)
+#             a_line.append(a_right_point)
+#
+#     left_point, right_point = fit_phase_jump(q, dt, func, func_args, line[-2], line[-1], accuracy=eps_stop)
+#     line.append(left_point)
+#     line.append(right_point)
+#
+#     eigenvalue = (line[-1] + line[-2]) / 2.
+#     return eigenvalue
+#
+#
+# def find_spectrum_pjt_cauchy(q, t, xi_cont, a_xi):
+#     print("--------------- start PJT ---------------")
+#
+#     spectrum = []
+#     time_found = []
+#     total_phase_shift, error_code, jump = get_contour_phase_shift_adaptive(q, t, xi_cont, a_xi)
+#     if error_code != 0:
+#         print("[find_spectrum_pjt] Error: problem with jump localisation")
+#         return -1
+#     total_discr = round(total_phase_shift / (2. * np.pi))
+#     n_jump = len(jump)
+#     print("Number of discrete eigenvalues:", total_discr)
+#     print("Number of jumps:", n_jump)
+#     if n_jump != total_discr:
+#         print("[find_spectrum_pjt] Error: problem with jump cleaning")
+#         return -2
+#
+#     for i in range(n_jump):
+#         t_start = time.time()
+#         spectrum.append(find_one_eigenvalue_pjt(q, t, xi_cont, a_xi, jump[i]['xi'], jump[i]['xi_next']))
+#         t_end = time.time()
+#         time_found.append(t_end - t_start)
+#
+#     print("--------------- end PJT ---------------")
+#
+#     table = PrettyTable()
+#     table.field_names = ["n", "eigenvalue", "time, s"]
+#
+#     soliton_energy = 0.0
+#     for i in range(len(spectrum)):
+#         table.add_row([i, spectrum[i], time_found[i]])
+#         soliton_energy += 4. * spectrum[i].imag
+#
+#     table.add_row(["-", "-", "-"])
+#     table.add_row(["E", soliton_energy, ""])
+#
+#     print(table)
+#
+#     return spectrum
+#
+#
+# def find_spectrum_pjt(q, t, func, func_args, xi_cont, a_xi):
+#     print("--------------- start PJT ---------------")
+#
+#     spectrum = []
+#     time_found = []
+#     total_phase_shift, error_code, jump = get_contour_phase_shift_adaptive(q, t, xi_cont, a_xi)
+#     if error_code != 0:
+#         print("[find_spectrum_pjt] Error: problem with jump localisation")
+#         return -1
+#     total_discr = round(total_phase_shift / (2. * np.pi))
+#     n_jump = len(jump)
+#     print("Number of discrete eigenvalues:", total_discr)
+#     print("Number of jumps:", n_jump)
+#     if n_jump != total_discr:
+#         print("[find_spectrum_pjt] Error: problem with jump cleaning")
+#         return -2
+#
+#     for i in range(n_jump):
+#         t_start = time.time()
+#         spectrum.append(find_one_eigenvalue_pjt(q, t, func, func_args, jump[i]['xi'], jump[i]['xi_next']))
+#         t_end = time.time()
+#         time_found.append(t_end - t_start)
+#
+#     print("--------------- end PJT ---------------")
+#
+#     table = PrettyTable()
+#     table.field_names = ["n", "eigenvalue", "time, s"]
+#
+#     soliton_energy = 0.0
+#     for i in range(len(spectrum)):
+#         table.add_row([i, spectrum[i], time_found[i]])
+#         soliton_energy += 4. * spectrum[i].imag
+#
+#     table.add_row(["-", "-", "-"])
+#     table.add_row(["E", soliton_energy, ""])
+#
+#     print(table)
+#
+#     return spectrum
+#
+# def fit_phase_jump_cauchy(xi_cont, a_xi, first, second, accuracy=1e-4):
+#     direction = second - first
+#     a_first = get_a_cauchy(first, xi_cont, a_xi)
+#     a_second = get_a_cauchy(second, xi_cont, a_xi)
+#
+#     i = 1
+#     while abs(second - first) > accuracy:
+#         middle = first + direction / np.power(2.0, i)
+#         a_middle = get_a_cauchy(middle, xi_cont, a_xi)
+#
+#         if is_arg_jump(a_first, a_second) == 1:
+#             a_second = a_middle
+#             second = middle
+#         else:
+#             a_first = a_middle
+#             first = middle
+#
+#         i += 1
+#
+#         if i >= 100:
+#             print("[fit_phase_jump]: Error! Number of iterations more than 100")
+#             break
+#
+#     return first, second
+#
+#
+# def fit_phase_jump(q, dt, func, func_args, first, second, accuracy=1e-4):
+#     direction = second - first
+#     a_first = func(q, dt, first, func_args[0], func_args[1])
+#     a_second = func(q, dt, second, func_args[0], func_args[1])
+#
+#     i = 1
+#     while abs(second - first) > accuracy:
+#         middle = first + direction / np.power(2.0, i)
+#         a_middle = func(q, dt, middle, func_args[0], func_args[1])
+#
+#         if is_arg_jump(a_first, a_second) == 1:
+#             a_second = a_middle
+#             second = middle
+#         else:
+#             a_first = a_middle
+#             first = middle
+#
+#         i += 1
+#
+#         if i >= 100:
+#             print("[fit_phase_jump]: Error! Number of iterations more than 100")
+#             break
+#
+#     return first, second

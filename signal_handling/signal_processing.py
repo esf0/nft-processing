@@ -106,8 +106,8 @@ def add_lateral_to_signal(signal, f_slope, t, n_add=-1):
 #     return signal_proc, t_proc
 
 
-def process_nft_window(q, z_prop, np_symb, t_symb, ns_proc, ns_d, ns_skip, n_shift, window_mode='cdc', beta2=-1.0,
-            xi_upsampling=1, fnft_type=0, print_sys_message=False):
+def process_fnft_window(q, z_prop, np_symb, t_symb, ns_proc, ns_d, ns_skip, n_shift, window_mode='cdc', beta2=-1.0,
+                        xi_upsampling=1, fnft_type=0, print_sys_message=False):
     # q -- singal at Rx
     # z_prop -- distance in dimensionless units
 
@@ -149,12 +149,140 @@ def process_nft_window(q, z_prop, np_symb, t_symb, ns_proc, ns_d, ns_skip, n_shi
     n_add_cut = (sg.round_power_of_2(2, len(q_cut)) - len(q_cut)) // 2
     q_for_nft, t_for_nft = add_lateral_to_signal(q_cut, slope_zero, t_cut, n_add_cut)
 
-    result_dbp_nft = nft.make_dbp_nft(q_for_nft, t_for_nft - (t_for_nft[-1] + t_for_nft[0]) / 2, z_prop,
-                                      xi_upsampling=xi_upsampling, inverse_type='tib', fnft_type=fnft_type,
-                                      print_sys_message=print_sys_message)
+    result_dbp_nft = nft.make_dbp_fnft(q_for_nft, t_for_nft - (t_for_nft[-1] + t_for_nft[0]) / 2, z_prop,
+                                       xi_upsampling=xi_upsampling, inverse_type='tib', fnft_type=fnft_type,
+                                       print_sys_message=print_sys_message)
 
     q_nft = result_dbp_nft['q_total']
     # q_nft = result_dbp_nft['q_fnft']
+
+    return q_nft, t_for_nft, result_dbp_nft, n_add_cut
+
+
+def process_nft_window(q, z_prop, np_symb, t_symb, ns_proc, ns_d, ns_skip, n_shift, beta2=-1.0,
+                       window_mode='cdc',
+                       xi_upsampling=1,
+                       forward_continuous_type='fnft',
+                       forward_discrete_type='fnft',
+                       forward_discrete_coef_type='fnftpoly',
+                       inverse_type='both',
+                       fnft_type=0, nft_type='bo',
+                       use_contour=False, n_discrete_skip=10,
+                       print_sys_message=False):
+    """
+    Process given signal with NFT.
+
+    Args:
+        q: propagated signal at Rx (receiver)
+        z_prop: dimensionless propagation distance
+        np_symb: number of points per symbol
+        t_symb: dimensionless symbol time interval. Time length of one symbol
+        ns_proc: number of symbols to process
+        ns_d: number of symbols on the left and right side of processing interval which contain information about chromatic dispersion
+        ns_skip: number of symbols from the left to skip
+        n_shift: number of additional points on the left and right sides of the signal. See README.md for explanation.
+        beta2: :math:`\\beta_2` parameter. +-1
+        window_mode: (default = 'cdc') type of window to cut the signal
+
+            - 'cdc' -- CDC-Windowed mode. 1. Compensate chromatic dispersion. 2. Cut signal. 3. De-compensate (return) chromatic dispersion. 4. Process signal
+            - 'plain' -- cut signal without any manipulation with it.
+
+        xi_upsampling: (default = 1) upsampling in nonlinear domain. n_xi = xi_upsampling * n_t
+        forward_continuous_type: type of calculation of continuous spectrum for forward NFT
+
+            - 'fnft' -- use FNFT to calculate continuous spectrum (real axe only!)
+            - 'fnftpoly' -- use polynomials from FNFT to calculate continuous spectrum (arbitrary contour)
+            - 'slow' -- use transfer matrices to calculate continuous spectrum (arbitrary contour)
+
+        forward_discrete_type:
+
+            - 'fnft' -- use FNFT to calculate discrete spectrum points (coefficients calculated automatically)
+            - 'pjt' -- use PJT (phase jump tracking)
+            - 'roots' -- not implemented (other procedures to find polynomial roots -> discrete spectrum points)
+
+        forward_discrete_coef_type:
+
+            - 'fnftpoly' -- use polynomial from FNFT to calculate spectral coefficients (b-coefficient is not stable for eigenvalues with bit imaginary part)
+            - 'bi-direct' -- use bi-directional algorithm (more stable for b-coefficient)
+
+        inverse_type: type for inverse NFT, default = 'both'
+
+            - 'both' -- both fnft (layer peeling with Darboux) and iTIB method
+            - 'fnft' -- fnft method (layer peeling with Darboux)
+            - 'tib' -- iTIB method, combination for left and right problems
+
+        fnft_type: type of FNFT calculation, default = 0
+        nft_type: default = 'bo', type of NFT transfer matricies for slow methods and bi-directional algorithm
+        use_contour: default = False, use arbitrary spectral contour in spectral space
+        n_discrete_skip: default = 10. If we use contour, how much discrete points rest
+        print_sys_message: print additional messages during calculation, default = False
+
+    Returns:
+        Restored signal and some additional parameters (q_nft, t_for_nft, result_dbp_nft, n_add_cut).
+        If inverse_type='both' it uses 'tib'. So better specify directly 'tib' or 'fnft' for inverse NFT.
+
+    """
+    # q -- singal at Rx
+    # z_prop -- distance in dimensionless units
+
+    dt = t_symb / np_symb
+
+    n_t = len(q)
+    t_span = (n_t - 1) * dt
+
+    ns_total = 2 * ns_d + ns_proc  # total number of symbols for processing
+
+    if window_mode == 'cdc':
+
+        # make dispersion compensation
+        w = fftshift([(i - n_t / 2) * (2. * np.pi / t_span) for i in range(n_t)])
+        q_cdc = sg.dispersion_compensation_t(q, w, z_prop, beta2)
+
+        # get window cut for CD compensated signal
+        # q_cdc_proc, t_cdc_proc = cut(q_cdc, np_symb, ns_proc, ns_d, ns_skip, t_symb=t_symb)
+
+        # cut CD-compensated signal and inverse CDC (return to propagated signal)
+        q_cdc_window = cut_signal_window(q_cdc, np_symb, t_symb, ns_total, ns_skip, n_shift)
+        q_proc = sg.dispersion_compensation_t(q_cdc_window, w, -z_prop, beta2)
+
+    elif window_mode == 'plain':
+
+        # do nothing with the signal on the Rx
+        q_proc = q
+
+    else:
+        print('window mode ' + window_mode + ' is not defined')
+        return -1
+
+    q_cut, t_cut = get_sub_signal(q_proc, np_symb, t_symb, ns_total, ns_skip, n_shift)
+
+    # add slope function to side intervals
+    # you can define your own slope function
+    # default: slope_zero -- fills side intervals with zeros
+
+    n_add_cut = (sg.round_power_of_2(2, len(q_cut)) - len(q_cut)) // 2  # 'round' to next power of 2
+    q_for_nft, t_for_nft = add_lateral_to_signal(q_cut, slope_zero, t_cut, n_add_cut)
+
+    # result_dbp_nft = nft.make_dbp_fnft(q_for_nft, t_for_nft - (t_for_nft[-1] + t_for_nft[0]) / 2, z_prop,
+    #                                    xi_upsampling=xi_upsampling, inverse_type='tib', fnft_type=fnft_type,
+    #                                    print_sys_message=print_sys_message)
+
+    result_dbp_nft = nft.make_dbp_nft(q, t_for_nft - (t_for_nft[-1] + t_for_nft[0]) / 2, z_prop,
+                                      xi_upsampling=xi_upsampling,
+                                      forward_continuous_type=forward_continuous_type,
+                                      forward_discrete_type=forward_discrete_type,
+                                      forward_discrete_coef_type=forward_discrete_coef_type,
+                                      inverse_type=inverse_type,
+                                      fnft_type=fnft_type, nft_type=nft_type,
+                                      use_contour=use_contour, n_discrete_skip=n_discrete_skip,
+                                      print_sys_message=print_sys_message)
+
+    if inverse_type == 'both' or inverse_type == 'tib':
+        q_nft = result_dbp_nft['q_total']
+    elif inverse_type == 'fnft':
+        q_nft = result_dbp_nft['q_fnft']
+    else:
+        print("[process_nft_window]: wrong inverse_type")
 
     return q_nft, t_for_nft, result_dbp_nft, n_add_cut
 
@@ -187,8 +315,58 @@ def get_restore_error(q_original, q_restored, points_original, points_restored, 
     return diff, mse, max_point_diff
 
 
-def process_signal(q_original, q_prop, z_prop, np_symb, t_symb, n_car, modulation_type, scale_coef, n_add=0,
-                   type={'fnft_type': 0}, print_sys_message=False):
+def process_signal_fnft(q_original, q_prop, z_prop, np_symb, t_symb, n_car, modulation_type,
+                        scale_coef, n_add=0,
+                        ns_proc=8, ns_d=130, ns_skip=0, n_steps=1,
+                        window_mode='cdc',
+                        fnft_type=0, xi_upsampling=4,
+                        print_sys_message=False):
+    """
+    Same procedure as process_signal_nft, but it uses only FNFT.
+
+    Args:
+        q_original: original signal from Tx (transmitter)
+        q_prop: propagated signal at Rx (receiver)
+        z_prop: dimensionless propagation distance
+        np_symb: number of points per symbol
+        t_symb: dimensionless symbol time interval. Time length of one symbol
+        n_car: number of WDM carriers (only n_car=1 works now)
+        modulation_type: type of modulation
+        scale_coef: scale coefficient for constellation
+        n_add: (default = 0) number of additional points on the left and right sides of the signal. See README.md for explanation.
+        ns_proc: (default = 8) number of symbols to process
+        ns_d: (default = 30) number of symbols on the left and right side of processing interval which contain information about chromatic dispersion
+        ns_skip: (default = 0) number of symbols from the left to skip
+        n_steps: (default = 1) number of processing steps
+        window_mode: (default = 'cdc') type of window to cut the signal
+
+            - 'cdc' -- CDC-Windowed mode. 1. Compensate chromatic dispersion. 2. Cut signal. 3. De-compensate (return) chromatic dispersion. 4. Process signal
+            - 'plain' -- cut signal without any manipulation with it.
+
+        fnft_type: type of FNFT calculation, default = 0
+        xi_upsampling: (default = 1) upsampling in nonlinear domain. n_xi = xi_upsampling * n_t
+        print_sys_message: print additional messages during calculation, default = False
+
+    Returns:
+        Dictionary. Points from WDM signal from NFT-DBP and CDC, and MSEs for signals
+
+        - 'points' -- constellation points from NFT-DBP procedure
+        - 'points_scaled' -- points multiplied by scale_coef
+        - 'points_found' -- closest points in constellation for points_scaled
+        - 'points_cdc'  -- constellation points from CDC procedure
+        - 'points_cdc_scaled' -- points_cdc multiplied by scale_coef
+        - 'points_cdc_found' -- closest points in constellation for points_cdc_scaled
+        - 'points_original' -- original constellation points
+        - 'points_original_scaled' -- points_original multiplied by scale_coef
+        - 'points_original_found' -- closest points in constellation for points_original_scaled
+        - 'mse_nft' -- MSE for NFT restored signal and original one. Uses full ns_d + ns_proc + ns_d number of symbols
+        - 'mse_nft_range' -- same but uses only processing interval (ns_proc symbols)
+        - 'max_point_diff_nft' -- absolute value of maximum distance between found by NFT and original point in constellation
+        - 'mse_cdc' -- MSE for CDC restored signal and original one. Uses full ns_d + ns_proc + ns_d number of symbols
+        - 'mse_cdc_range' -- same but uses only processing interval (ns_proc symbols)
+        - 'max_point_diff_cdc' - absolute value of maximum distance between found by CDC and original point in constellation
+
+    """
 
     # n_add -- number of points which was added to the signal on the left side of first time slot
     # for burst mode n_add equals to the sum of lateral points (shape of the signal, e.g. sinc) and zeros points
@@ -201,16 +379,16 @@ def process_signal(q_original, q_prop, z_prop, np_symb, t_symb, n_car, modulatio
     n_t = len(q_prop)
     t_span = (n_t - 1) * dt
 
-    window_mode = 'cdc'
-    xi_upsampling = 4
+    # window_mode = 'cdc'
+    # xi_upsampling = 4
 
-    ns_proc = 8
-    ns_d = 30 - ns_proc // 2
+    # ns_proc = 8
+    # ns_d = 30 - ns_proc // 2
     ns_total = ns_proc + 2 * ns_d
-    ns_skip = 712  # initial number of symbols to skip to eliminate border effects
+    # ns_skip = 712  # initial number of symbols to skip to eliminate border effects
 
     step = ns_proc  # step size in number of symbols for signal processing. Each iteration window shifts to step
-    n_steps = 200  # total number of steps (iterations)
+    # n_steps = 200  # total number of steps (iterations)
 
     # lists of all points found
     # for NFT
@@ -245,11 +423,11 @@ def process_signal(q_original, q_prop, z_prop, np_symb, t_symb, n_car, modulatio
         # np_skip = ns_skip * np_symb + n_add
 
         # make nft to restore original signal
-        q_nft, t_nft, result_dbp_nft, n_add_nft = process_nft_window(q_prop, z_prop, np_symb, t_symb, ns_proc, ns_d,
-                                                                     ns_skip, n_add, window_mode=window_mode,
-                                                                     xi_upsampling=xi_upsampling,
-                                                                     fnft_type=type['fnft_type'],
-                                                                     print_sys_message=print_sys_message)
+        q_nft, t_nft, result_dbp_nft, n_add_nft = process_fnft_window(q_prop, z_prop, np_symb, t_symb, ns_proc, ns_d,
+                                                                      ns_skip, n_add, window_mode=window_mode,
+                                                                      xi_upsampling=xi_upsampling,
+                                                                      fnft_type=fnft_type,
+                                                                      print_sys_message=print_sys_message)
         t_points = get_points_from_signal(q_nft, np_symb, t_symb, n_car, modulation_type,
                                           scale_coef, n_add=n_add_nft)
 
@@ -348,6 +526,257 @@ def process_signal(q_original, q_prop, z_prop, np_symb, t_symb, n_car, modulatio
 
     return result
 
+
+def process_signal(q_original, q_prop, z_prop, np_symb, t_symb, n_car, modulation_type,
+                   scale_coef, n_add=0,
+                   ns_proc=8, ns_d=30, ns_skip=0, n_steps=1,
+                   window_mode='cdc',
+                   xi_upsampling=1,
+                   forward_continuous_type='fnft',
+                   forward_discrete_type='fnft',
+                   forward_discrete_coef_type='fnftpoly',
+                   inverse_type='both',
+                   fnft_type=0, nft_type='bo',
+                   use_contour=False, n_discrete_skip=10,
+                   print_sys_message=False):
+    """
+    Takes signal and makes DBP with NFT. Restore signal, restore points from WDM signal.
+    Also, it compares NFT-DBP with CDC. But it doesn't make phase rotation.
+
+    Args:
+        q_original: original signal from Tx (transmitter)
+        q_prop: propagated signal at Rx (receiver)
+        z_prop: dimensionless propagation distance
+        np_symb: number of points per symbol
+        t_symb: dimensionless symbol time interval. Time length of one symbol
+        n_car: number of WDM carriers (only n_car=1 works now)
+        modulation_type: type of modulation
+        scale_coef: scale coefficient for constellation
+        n_add: (default = 0) number of additional points on the left and right sides of the signal. See README.md for explanation.
+        ns_proc: (default = 8) number of symbols to process
+        ns_d: (default = 30) number of symbols on the left and right side of processing interval which contain information about chromatic dispersion
+        ns_skip: (default = 0) number of symbols from the left to skip
+        n_steps: (default = 1) number of processing steps
+        window_mode: (default = 'cdc') type of window to cut the signal
+
+            - 'cdc' -- CDC-Windowed mode. 1. Compensate chromatic dispersion. 2. Cut signal. 3. De-compensate (return) chromatic dispersion. 4. Process signal
+            - 'plain' -- cut signal without any manipulation with it.
+
+        xi_upsampling: (default = 1) upsampling in nonlinear domain. n_xi = xi_upsampling * n_t
+        forward_continuous_type: type of calculation of continuous spectrum for forward NFT
+
+            - 'fnft' -- use FNFT to calculate continuous spectrum (real axe only!)
+            - 'fnftpoly' -- use polynomials from FNFT to calculate continuous spectrum (arbitrary contour)
+            - 'slow' -- use transfer matrices to calculate continuous spectrum (arbitrary contour)
+
+        forward_discrete_type:
+
+            - 'fnft' -- use FNFT to calculate discrete spectrum points (coefficients calculated automatically)
+            - 'pjt' -- use PJT (phase jump tracking)
+            - 'roots' -- not implemented (other procedures to find polynomial roots -> discrete spectrum points)
+
+        forward_discrete_coef_type:
+
+            - 'fnftpoly' -- use polynomial from FNFT to calculate spectral coefficients (b-coefficient is not stable for eigenvalues with bit imaginary part)
+            - 'bi-direct' -- use bi-directional algorithm (more stable for b-coefficient)
+
+        inverse_type: type for inverse NFT, default = 'both'
+
+            - 'both' -- both fnft (layer peeling with Darboux) and iTIB method
+            - 'fnft' -- fnft method (layer peeling with Darboux)
+            - 'tib' -- iTIB method, combination for left and right problems
+
+        fnft_type: type of FNFT calculation, default = 0
+        nft_type: default = 'bo', type of NFT transfer matricies for slow methods and bi-directional algorithm
+        use_contour: default = False, use arbitrary spectral contour in spectral space
+        n_discrete_skip: default = 10. If we use contour, how much discrete points rest
+        print_sys_message: print additional messages during calculation, default = False
+
+    Returns:
+        Dictionary. Points from WDM signal from NFT-DBP and CDC, and MSEs for signals
+
+        - 'points' -- constellation points from NFT-DBP procedure
+        - 'points_scaled' -- points multiplied by scale_coef
+        - 'points_found' -- closest points in constellation for points_scaled
+        - 'points_cdc'  -- constellation points from CDC procedure
+        - 'points_cdc_scaled' -- points_cdc multiplied by scale_coef
+        - 'points_cdc_found' -- closest points in constellation for points_cdc_scaled
+        - 'points_original' -- original constellation points
+        - 'points_original_scaled' -- points_original multiplied by scale_coef
+        - 'points_original_found' -- closest points in constellation for points_original_scaled
+        - 'mse_nft' -- MSE for NFT restored signal and original one. Uses full ns_d + ns_proc + ns_d number of symbols
+        - 'mse_nft_range' -- same but uses only processing interval (ns_proc symbols)
+        - 'max_point_diff_nft' -- absolute value of maximum distance between found by NFT and original point in constellation
+        - 'mse_cdc' -- MSE for CDC restored signal and original one. Uses full ns_d + ns_proc + ns_d number of symbols
+        - 'mse_cdc_range' -- same but uses only processing interval (ns_proc symbols)
+        - 'max_point_diff_cdc' - absolute value of maximum distance between found by CDC and original point in constellation
+
+    """
+
+    # n_add -- number of points which was added to the signal on the left side of first time slot
+    # for burst mode n_add equals to the sum of lateral points (shape of the signal, e.g. sinc) and zeros points
+
+    # parameters of the line
+    beta2 = -1.0
+
+    # parameters to signal process
+    dt = t_symb / np_symb
+    n_t = len(q_prop)
+    t_span = (n_t - 1) * dt
+
+    # window_mode = 'cdc'
+    # xi_upsampling = 4
+
+    # ns_proc = 8
+    # ns_d = 30 - ns_proc // 2
+    ns_total = ns_proc + 2 * ns_d
+    # ns_skip = 712  # initial number of symbols to skip to eliminate border effects
+
+    step = ns_proc  # step size in number of symbols for signal processing. Each iteration window shifts to step
+    # n_steps = 200  # total number of steps (iterations)
+
+    # lists of all points found
+    # for NFT
+    points = []
+    points_scaled = []
+    points_found = []
+    # for CDC
+    points_cdc = []
+    points_cdc_scaled = []
+    points_cdc_found = []
+    # original points
+    points_original = []
+    points_original_scaled = []
+    points_original_found = []
+
+    # lists of all error for each processing step
+    # for NFT
+    diff_nft = []
+    diff_nft_range = []
+    mse_nft = []
+    mse_nft_range = []
+    max_point_diff_nft = []
+    # for CDC
+    diff_cdc = []
+    diff_cdc_range = []
+    mse_cdc = []
+    mse_cdc_range = []
+    max_point_diff_cdc = []
+
+    for proc_iter in range(n_steps):
+
+        # np_skip = ns_skip * np_symb + n_add
+
+        # make nft to restore original signal
+        q_nft, t_nft, result_dbp_nft, n_add_nft = process_nft_window(q_prop, z_prop, np_symb, t_symb, ns_proc, ns_d,
+                                                                     ns_skip, n_add,
+                                                                     window_mode=window_mode,
+                                                                     xi_upsampling=xi_upsampling,
+                                                                     forward_continuous_type=forward_continuous_type,
+                                                                     forward_discrete_type=forward_discrete_type,
+                                                                     forward_discrete_coef_type=forward_discrete_coef_type,
+                                                                     inverse_type=inverse_type,
+                                                                     fnft_type=fnft_type, nft_type=nft_type,
+                                                                     use_contour=use_contour,
+                                                                     n_discrete_skip=n_discrete_skip,
+                                                                     print_sys_message=print_sys_message)
+
+        t_points = get_points_from_signal(q_nft, np_symb, t_symb, n_car, modulation_type, scale_coef, n_add=n_add_nft)
+
+        # make CDC to restore original signal
+        w = fftshift([(i - n_t / 2) * (2. * np.pi / t_span) for i in range(n_t)])
+        q_cdc = sg.dispersion_compensation_t(q_prop, w, z_prop, beta2)
+        # cut CDC-compensated signal
+        q_cut_cdc, t_cut_cdc = get_sub_signal(q_cdc, np_symb, t_symb, ns_total, ns_skip, n_add)
+        q_cut_cdc_t, t_cut_cdc_t = add_lateral_to_signal(q_cut_cdc, slope_zero, t_cut_cdc, n_add_nft)
+        t_points_cdc = get_points_from_signal(q_cut_cdc, np_symb, t_symb, n_car, modulation_type, scale_coef)
+
+        # cut original signal to calculate errors and get points
+        q_cut, t_cut = get_sub_signal(q_original, np_symb, t_symb, ns_total, ns_skip, n_add)
+        q_cut_t, t_cut_t = add_lateral_to_signal(q_cut, slope_zero, t_cut, n_add_nft)
+        t_points_original = get_points_from_signal(q_cut, np_symb, t_symb, n_car, modulation_type, scale_coef)
+
+        # take only processing points
+        t_points_range = get_points_range(t_points[0], ns_proc, ns_d)  # points from the signal
+        t_points_range_scaled = get_points_range(t_points[1], ns_proc, ns_d)  # scale points
+        t_points_range_found = get_points_range(t_points[2], ns_proc, ns_d)  # find nearest constellation points
+
+        t_points_cdc_range = get_points_range(t_points_cdc[0], ns_proc, ns_d)
+        t_points_cdc_range_scaled = get_points_range(t_points_cdc[1], ns_proc, ns_d)
+        t_points_cdc_range_found = get_points_range(t_points_cdc[2], ns_proc, ns_d)
+
+        t_points_orig_range = get_points_range(t_points_original[0], ns_proc, ns_d)
+        t_points_orig_range_scaled = get_points_range(t_points_original[1], ns_proc, ns_d)
+        t_points_orig_range_found = get_points_range(t_points_original[2], ns_proc, ns_d)
+
+        # add points to total list of points
+        points = np.concatenate((points, t_points_range))
+        points_scaled = np.concatenate((points_scaled, t_points_range_scaled))
+        points_found = np.concatenate((points_found, t_points_range_found))
+
+        points_cdc = np.concatenate((points_cdc, t_points_cdc_range))
+        points_cdc_scaled = np.concatenate((points_cdc_scaled, t_points_cdc_range_scaled))
+        points_cdc_found = np.concatenate((points_cdc_found, t_points_cdc_range_found))
+
+        points_original = np.concatenate((points_original, t_points_orig_range))
+        points_original_scaled = np.concatenate((points_original_scaled, t_points_orig_range_scaled))
+        points_original_found = np.concatenate((points_original_found, t_points_orig_range_found))
+
+        ns_skip += step
+
+        if print_sys_message:
+            print("[" + window_mode + "] PER TIB:", sg.get_points_error_rate(t_points_orig_range_found, t_points_range_found),
+                  "| BER TIB:", sg.get_ber_by_points(t_points_orig_range_found, t_points_range_found, modulation_type)
+                  )
+
+        # calculate errors
+        # for NFT
+        t_diff_nft, t_mse_nft, t_max_point_diff_nft = get_restore_error(q_cut_t, q_nft, t_points_orig_range,
+                                                                        t_points_range, n_add=0)
+        t_diff_nft_range, t_mse_nft_range, _ = get_restore_error(q_cut_t, q_nft, t_points_orig_range, t_points_range,
+                                                                 n_add=n_add_nft + ns_d * np_symb)
+
+        # for CDC
+        t_diff_cdc, t_mse_cdc, t_max_point_diff_cdc = get_restore_error(q_cut_t, q_cut_cdc_t, t_points_orig_range,
+                                                                        t_points_cdc_range, n_add=0)
+        t_diff_cdc_range, t_mse_cdc_range, _ = get_restore_error(q_cut_t, q_cut_cdc_t, t_points_orig_range,
+                                                                 t_points_cdc_range, n_add=n_add_nft + ns_d * np_symb)
+
+        # add errors to total list of errors
+        # diff_nft = np.concatenate((diff_nft, t_diff_nft))
+        # diff_nft_range = np.concatenate((diff_nft_range, t_diff_nft_range))
+        mse_nft = np.concatenate((mse_nft, [t_mse_nft]))
+        mse_nft_range = np.concatenate((mse_nft_range, [t_mse_nft_range]))
+        max_point_diff_nft = np.concatenate((max_point_diff_nft, [t_max_point_diff_nft]))
+
+        # diff_cdc = np.concatenate((diff_cdc, t_diff_cdc))
+        # diff_cdc_range = np.concatenate((diff_cdc_range, t_diff_cdc_range))
+        mse_cdc = np.concatenate((mse_cdc, [t_mse_cdc]))
+        mse_cdc_range = np.concatenate((mse_cdc_range, [t_mse_cdc_range]))
+        max_point_diff_cdc = np.concatenate((max_point_diff_cdc, [t_max_point_diff_cdc]))
+
+    result = {'points': points,
+              'points_scaled': points_scaled,
+              'points_found': points_found,
+              'points_cdc': points_cdc,
+              'points_cdc_scaled': points_cdc_scaled,
+              'points_cdc_found': points_cdc_found,
+              'points_original': points_original,
+              'points_original_scaled': points_original_scaled,
+              'points_original_found': points_original_found,
+              # 'diff_nft': diff_nft,
+              # 'diff_nft_range': diff_nft_range,
+              'mse_nft': mse_nft,
+              'mse_nft_range': mse_nft_range,
+              'max_point_diff_nft': max_point_diff_nft,
+              # 'diff_cdc': diff_cdc,
+              # 'diff_cdc_range': diff_cdc_range,
+              'mse_cdc': mse_cdc,
+              'mse_cdc_range': mse_cdc_range,
+              'max_point_diff_cdc': max_point_diff_cdc
+              }
+
+    return result
 
 
 
