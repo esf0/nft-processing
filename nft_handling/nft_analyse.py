@@ -428,6 +428,141 @@ def do_bi_direct_array(q, t, xi, type='orig'):
     return b, r, ad
 
 
+def do_bi_direct_arbitrary(q, t, xi, type='orig'):
+    """
+        Bi-directional algorithm to calculate b-coefficient for arbitrary spectral point
+
+        Args:
+            q: signal
+            t: time grid
+            xi: spectral parameter where we calculate b(xi) (r(xi))
+            type: type of calculation scheme
+
+        Returns:
+            b, b / ad, ad
+
+            - b -- b-coefficient (norming constant)
+            - r -- r-coefficient (residue)
+            - ad -- derivative of a-coefficient in point xi
+
+        """
+    # warnings.filterwarnings("error")
+
+    sigma = 1  # focusing case always
+
+    dt = t[1] - t[0]
+    n = len(q)
+    t_span = t[-1] - t[0]
+
+    x = np.zeros((n + 1, 2), dtype=complex)
+    xd = np.zeros((n + 1, 2), dtype=complex)
+    y = np.zeros((n + 1, 2), dtype=complex)
+
+    if type == 'orig':
+        x[0] = np.array([1, 0])
+        xd[0] = np.array([0, 0])
+        y[-1] = np.array([0, 1])
+    else:
+        x[0] = np.array([1, 0]) * np.exp(-1.0j * xi * (-t_span / 2.0 - dt / 2.0))
+        xd[0] = np.array([0, 0]) * -1.0j * (-t_span / 2.0 - dt / 2.0) * np.exp(-1.0j * xi * (-t_span / 2.0 - dt / 2.0))
+        # y[-1] = np.array([0, 1]) * np.exp(-1.0j * xi * (t_span / 2.0 + dt / 2.0))
+        y[-1] = np.array([0, 1]) * np.exp(1.0j * xi * (t_span / 2.0 + dt / 2.0))
+
+    for k in range(n):
+
+        if type == 'orig':
+            a_matrix = np.array([[1.0, dt * q[k] * np.exp(2.0j * xi * t[k])],
+                                 [-dt * np.conj(q[k]) * np.exp(-2.0j * xi * t[k]), 1.0]])
+            ad_matrix = np.array([[0.0, 2.0j * t[k] * dt * q[k] * np.exp(2.0j * xi * t[k])],
+                                  [2.0j * t[k] * dt * np.conj(q[k]) * np.exp(-2.0j * xi * t[k]), 0.0]])
+            b_matrix = np.array([[1.0, -dt * q[-k - 1] * np.exp(2.0j * xi * t[-k - 1])],
+                                 [dt * np.conj(q[-k - 1]) * np.exp(-2.0j * xi * t[-k - 1]), 1.0]])
+        else:
+            a_matrix = get_transfer_matrix(q, dt, k, xi, type, sigma)
+            ad_matrix = get_transfer_matrix(q, dt, k, xi, type + 'd', sigma)
+            b_matrix = get_transfer_matrix(q, -dt, -k - 1, xi, type, sigma)
+
+        x[k + 1] = np.matmul(a_matrix, x[k])
+        xd[k + 1] = np.matmul(a_matrix, xd[k]) + np.matmul(ad_matrix, x[k])
+
+        y[-k - 2] = np.matmul(b_matrix, y[-k - 1])
+
+    # print(x[0])
+
+    with warnings.catch_warnings(record=True) as w:
+
+        k_target = 0
+        diff = 100
+        for k in range(n + 1):
+
+            if type == 'orig':
+                value = np.absolute(np.absolute(x[k][0]) - 0.5)
+            else:
+                value = np.absolute(np.absolute(x[k][0] * np.exp(1.0j * xi * (dt * k - t_span / 2.0 - dt / 2.0))) - 0.5)
+
+            if value < diff:
+                k_target = k
+                diff = value
+
+    # print(k_target)
+    # print(x[k_target][0])
+    # print(x[-1])
+    # print(x[k_target][0] / y[k_target][0])
+
+    if type == 'orig':
+        a = x[-1][0]
+        ad = xd[-1][0]
+    else:
+        # b = x[k_target][0] / y[k_target][0] * np.exp(-1.0j * 2.0 * xi * (t_span / 2.0 + dt / 2.0))
+        # b = x[k_target][0] / y[k_target][0] * np.exp(-1.0j * xi * (t_span + dt))  # the closest phase
+        # b = x[k_target][0] / y[k_target][0]
+
+        a = x[-1][0] * np.exp(1.0j * xi * (t_span / 2.0 + dt / 2.0))
+        ad = xd[-1][0] * np.exp(1.0j * xi * (t_span / 2.0 + dt / 2.0))
+
+    b0 = x[k_target][0] / y[k_target][0] * (1 - np.power(np.absolute(y[k_target][1]), 2)) + x[k_target][1] * np.conj(
+        y[k_target][1])
+
+    # b = (x[k_target][0] - a * np.conj(y[k_target][1])) / y[k_target][0]
+
+    b1 = x[k_target][1] / y[k_target][1] * (1 - np.power(np.absolute(y[k_target][0]), 2)) + x[k_target][0] * np.conj(
+        y[k_target][0])
+
+    return a, 0.5 * (b0 + b1)
+
+
+def do_bi_direct_arbitrary_array(q, t, xi, type='orig'):
+    """
+    Bi-directional algorithm to calculate residues and norming constants for array of discrete spectrum points
+
+    Args:
+        q: signal
+        t: time grid
+        xi: array of spectral parameters where we calculate b(xi) (r(xi))
+        type: type of calculation scheme
+
+            - 'orig' -- Ablowitz-Ladik scheme
+            - 'bo' -- Bofetta-Osborne
+            - 'tes4' -- TES4
+            - 'es4' -- ES4
+
+    Returns:
+        b: array of b-coefficients (norming constants)
+        r: array of r-coefficient (residues)
+        ad: array of derivative of a-coefficients in points xi
+
+    """
+    n_xi = len(xi)
+    a = np.zeros(n_xi, dtype=complex)
+    b = np.zeros(n_xi, dtype=complex)
+    # r = np.zeros(n_xi, dtype=complex)
+    # ad = np.zeros(n_xi, dtype=complex)
+    for k in range(n_xi):
+        a[k], b[k] = do_bi_direct_arbitrary(q, t, xi[k], type)
+
+    return a, b
+
+
 def get_pauli_coefficients(m):
     """
     Calculate matrix decomposition coefficients into Pauli matrices
@@ -1734,6 +1869,89 @@ def get_cut_spectrum_and_contour(xi_d, bd, ad, rd, n_points_rest, xi_span, n_xi)
         rd_new.append(rd[i_loc])
 
     return xi_d_new, bd, rd, ad, xi
+
+
+# root finding
+
+
+def durand_kerner(p, max_iter=10, tol=1e-10, check_tol=False, initial=None, shake=False):
+
+    n_roots = len(p) - 1
+    if initial is None:
+        initial = np.power(0.4+0.9j, np.arange(n_roots))
+
+    roots = initial
+
+    for iter in range(max_iter):
+        for r_ind in range(n_roots):
+            # correction =
+            product = p[0]
+            for r_sub in range(n_roots):
+                if r_sub != r_ind:
+                    product *= (roots[r_ind] - roots[r_sub])
+            roots[r_ind] -= np.polyval(p, roots[r_ind]) / product
+
+        break_flag = False
+        if check_tol:
+            break_flag = True
+            for r_ind in range(n_roots):
+                if not break_flag:
+                    break
+                if np.absolute(np.polyval(p, roots[r_ind])) > tol:
+                    break_flag = False
+
+        if break_flag:
+            print('break', iter)
+            break
+
+    if shake:
+        for r_ind in range(n_roots):
+            ampl = np.absolute(roots[r_ind])
+            roots[r_ind] += 1e-10 * ampl * (np.random.random() + 1.0j * np.random.random())
+
+        roots = durand_kerner(p, max_iter=max_iter, tol=tol, check_tol=check_tol, initial=roots, shake=False)
+
+
+    return roots
+
+
+def aberth_ehrlich(p, max_iter=10, tol=1e-10, check_tol=False, initial=None):
+
+    n_roots = len(p) - 1
+    if initial is None:
+        initial = np.power(0.4+0.9j, np.arange(n_roots))
+
+    dp = np.polyder(p)
+
+    roots = np.copy(initial)
+
+    for iter in range(max_iter):
+        for r_ind in range(n_roots):
+
+            p_over_pd = np.polyval(p, roots[r_ind]) / np.polyval(dp, roots[r_ind])
+            sum = 0
+            for r_sub in range(n_roots):
+                if r_sub != r_ind:
+                    sum += 1.0 / (roots[r_ind] - roots[r_sub])
+
+            correction = p_over_pd / (1.0 - p_over_pd * sum)
+            roots[r_ind] -= correction
+
+        break_flag = False
+        if check_tol:
+            break_flag = True
+            for r_ind in range(n_roots):
+                if not break_flag:
+                    break
+                if np.absolute(np.polyval(p, roots[r_ind])) > tol:
+                    break_flag = False
+
+        if break_flag:
+            print('break', iter)
+            break
+
+
+    return roots
 
 
 # Not used

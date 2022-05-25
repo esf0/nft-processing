@@ -44,6 +44,14 @@ def get_sech_shape(t, a, c, sigma=1):
     return q
 
 
+def get_sech_b_coef(xi, a, c, sigma=1):
+    d = np.sqrt(sigma * a ** 2 - c ** 2 / 4.0)
+    b_xi = 1.0 / (2.0 ** (1.0j * c) * a) * gamma(0.5 - 1.0j * (xi + c / 2)) * gamma(0.5 + 1.0j * (xi - c / 2)) / \
+           (gamma(-0.5j * c - d) * gamma(-0.5j * c + d))
+
+    return b_xi
+
+
 #########################################################
 # Test signals for Manakov equation (two polarisations) #
 #########################################################
