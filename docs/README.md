@@ -1,10 +1,10 @@
 # README
 
-Welcome to NFT processing module  
-It it written on python and uses modified versions of FNFT and FNFTpy.  
-PJT use C++ to calculate discrete eigenvalues for NF spectrum and has python interface.
+Welcome to NFT processing module. 
+It is written on Python and uses modified versions of FNFT and FNFTpy.  
+PJT uses C++ to calculate discrete eigenvalues for NF spectrum and has Python interface.
 [FNFT](https://github.com/FastNFT/FNFT) is written in pure C and 
-have python interface provided by [FNFTpy](https://github.com/xmhk/FNFTpy).
+have Python interface provided by [FNFTpy](https://github.com/xmhk/FNFTpy).
 
 
 ## Installation
