@@ -1,11 +1,6 @@
-import sys
-
-# adding signal_handling to the system path
-sys.path.insert(0, '../nft_handling/')
-
 import numpy as np
 import signal_generation as sg
-import nft_analyse as nft
+import nft_handling.nft_analyse as nft
 
 from scipy.fft import fft, ifft, fftfreq, fftshift, ifftshift
 

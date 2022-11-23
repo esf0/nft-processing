@@ -22,11 +22,11 @@ import timeit
 import time
 from tqdm import tqdm
 from scipy.fftpack import fft, ifft, fftfreq, fftshift, ifftshift
-from ssfm import fiber_propogate, get_soliton_pulse, get_gauss_pulse, get_energy
+from signal_handling.ssfm import fiber_propogate, get_soliton_pulse, get_gauss_pulse, get_energy
 import matplotlib.pyplot as plt
 import matplotlib
 
-import signal_generation as sg
+import signal_handling.signal_generation as sg
 import test_signals
 from pjt import pjt
 
