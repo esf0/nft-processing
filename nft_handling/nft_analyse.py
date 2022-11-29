@@ -367,10 +367,7 @@ def make_itib_from_scattering(r, xi, rd, xi_d, t, split_index, direction='left',
         print_calc_time(start_time, 'continuous part of Omega')
 
     start_time = datetime.now()
-    if direction == 'left':
-        omega_d = get_omega_discrete(rd, xi_d, coef_t * t)
-    else:
-        omega_d = get_omega_discrete(rd, xi_d, -coef_t * t)
+    omega_d = get_omega_discrete(rd, xi_d, coef_t * t)
     if print_sys_message:
         print_calc_time(start_time, 'discrete part of Omega')
 
@@ -1095,7 +1092,7 @@ def get_omega_continuous(r, xi, t, direction='left', use_fft=True):
             omega_r = fftshift(ifft(np.roll(r, 1))) / d_t
             omega_r = omega_r[::-1]
             for i in range(len(omega_r)):
-                if i % 2:
+                if not i % 2:
                     omega_r[i] = - omega_r[i]
 
         else:
@@ -1580,8 +1577,6 @@ def make_dbp_nft(q, t, z_back, xi_upsampling=1,
     # beta2 = -1.0
     # gamma = 1.0
 
-    print("b: ", b[0], b[1], b[-2], b[-1])
-
     b_prop = b * np.exp(-2. * 1.0j * z_back * np.power(xi, 2))
     b_prop_right = b_right * np.exp(2. * 1.0j * z_back * np.power(xi, 2))
     bd_prop = bd * np.exp(-2. * 1.0j * z_back * np.power(xi_d, 2))
@@ -1600,7 +1595,7 @@ def make_dbp_nft(q, t, z_back, xi_upsampling=1,
         q_left_part = make_itib_from_scattering(b_prop_right / a, xi, 1.0 / bd_prop / ad, xi_d, t, split_index,
                                                 'left', print_sys_message)
         # combine left and right parts
-        q_right_part = make_itib_from_scattering(b_prop / a, xi, bd_prop / ad, xi_d, t[::-1], n_t - split_index,
+        q_right_part = make_itib_from_scattering(b_prop / a, xi, bd_prop / ad, xi_d, t[::-1]*-1, n_t - split_index,
                                                  'right', print_sys_message)
         # restore left q part with itib
         q_tib_total = np.concatenate((q_left_part[:split_index], np.conj(q_right_part[:n_t - split_index][::-1])))
@@ -1612,7 +1607,7 @@ def make_dbp_nft(q, t, z_back, xi_upsampling=1,
     # additionally we restore signal with inverse fnft
     if inverse_type == 'fnft' or inverse_type == 'both':
         start_time = datetime.now()
-        res = nsev_inverse(np.roll(xi, 0), t, np.roll(b_prop, 0), xi_d, bd_prop, cst=1, dst=0, dis=fnft_type)
+        res = nsev_inverse(np.roll(xi, 0), t, np.roll(b_prop, 0), xi_d, bd_prop, cst=1, dst=0)
         q_fnft = res['q']
         if print_sys_message:
             print_calc_time(start_time, 'inverse FNFT')
