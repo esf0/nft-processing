@@ -1252,7 +1252,7 @@ def get_omega_continuous(r, xi, t, direction='left', use_fft=True):
                 omega_r_upsampled[eq] = fftshift(ifft(np.roll(np.conj(r[eq]), 1))) / d_t
 
             for eq in range(n_eq):
-                for i in range(n_t):
+                for i in range(n_xi):
                     if i % 2:
                         omega_r_upsampled[eq][i] = - omega_r_upsampled[eq][i]
             omega_r_upsampled = np.conj(omega_r_upsampled)
@@ -1263,15 +1263,14 @@ def get_omega_continuous(r, xi, t, direction='left', use_fft=True):
             omega_r_upsampled = omega_r_upsampled[:, ::-1]
 
             for eq in range(n_eq):
-                for i in range(n_t):
+                for i in range(n_xi):
                     if not i % 2:
                         omega_r_upsampled[eq][i] = - omega_r_upsampled[eq][i]
 
         else:
             print("make_itib_from_scattering: non-existing parameter!")
-        #print("xi =", xi)
-        #print("omega_r_upsampled =", omega_r_upsampled)
-        omega_r = omega_r_upsampled[:, :: int(n_xi / n_t)]
+
+        omega_r = omega_r_upsampled[:, int((n_xi - n_t) / 2):int((n_xi + n_t) / 2)]
 
     else:
         c = 0.5 / np.pi * 0.5 * d_xi
