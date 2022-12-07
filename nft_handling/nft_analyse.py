@@ -1,9 +1,3 @@
-import sys
-
-# adding signal_handling to the system path
-sys.path.insert(0, '../signal_handling/')
-sys.path.insert(0, '../pjt/')
-
 from importlib import reload
 import FNFTpy
 
@@ -27,7 +21,7 @@ import matplotlib.pyplot as plt
 import matplotlib
 
 import signal_handling.signal_generation as sg
-import test_signals
+import nft_handling.test_signals as test_signals
 from pjt import pjt
 
 import warnings
@@ -1331,14 +1325,14 @@ def make_dbp_fnft(q, t, z_back, xi_upsampling=1, inverse_type='both', fnft_type=
     # other idea is to play with coef_t, it can numerically give some gain, but I did not try it yet
 
 
-def make_dbp_nft(q, t, z_back, xi_upsampling=1,
-                 forward_continuous_type='fnft',
-                 forward_discrete_type='fnft',
-                 forward_discrete_coef_type='fnftpoly',
-                 inverse_type='both',
-                 fnft_type=0, nft_type='bo',
-                 use_contour=False, n_discrete_skip=10,
-                 print_sys_message=False):
+def make_dbp_nft_old(q, t, z_back, xi_upsampling=1,
+                     forward_continuous_type='fnft',
+                     forward_discrete_type='fnft',
+                     forward_discrete_coef_type='fnftpoly',
+                     inverse_type='both',
+                     fnft_type=0, nft_type='bo',
+                     use_contour=False, n_discrete_skip=10,
+                     print_sys_message=False):
     """
     Perform NFT backpropagation.
 
@@ -1392,6 +1386,167 @@ def make_dbp_nft(q, t, z_back, xi_upsampling=1,
     """
     # be careful, z_back is the distance for backward propagation
     # to make forward use -z_back
+
+    # define xi grid
+    n_t = len(t)
+    dt = t[1] - t[0]
+    t_span = t[-1] - t[0]
+    # print(t_span, dt * (n_t - 1))
+
+    n_xi = xi_upsampling * n_t
+
+    rv, xi_val = nsev_inverse_xi_wrapper(n_t, t[0], t[-1], n_xi)
+    xi = xi_val[0] + np.arange(n_xi) * (xi_val[1] - xi_val[0]) / (n_xi - 1)
+    xi_span = xi_val[1] - xi_val[0]
+
+    # if we want to use root finding procedure for polynomial, we should calculate coefficients
+    res_poly = None
+    if forward_continuous_type == 'fnftpoly' or forward_discrete_coef_type == 'fnftpoly':
+        res_poly = nsev_poly(q, t, dis=fnft_type)
+
+    # here we calculate discrete spectrum
+    res_discr = get_discrete_eigenvalues(q, t, type=forward_discrete_type, xi_upsampling=xi_upsampling,
+                                         max_discrete_points=2048, res_poly=res_poly)
+    xi_d = res_discr['discrete_spectrum']
+
+    if forward_discrete_type == 'fnft':  # norming constants and residues already calculated
+        bd = res_discr['disc_norm']
+        rd = res_discr['disc_res']
+        ad = bd / rd
+
+    if (forward_discrete_type == 'fnft' and forward_discrete_coef_type != 'fnft') or forward_discrete_type != 'fnft':
+        # we have to calculate coefficients
+        # even if we have already calculated with fnft but want use other type of calculation of coefficients
+        res_discr_coef = get_discrete_spectrum_coefficients(q, t, xi_d, type=forward_discrete_coef_type,
+                                                            type_coef='orig', fnft_type=fnft_type, res_poly=res_poly)
+        bd = res_discr_coef['bd']
+        rd = res_discr_coef['rd']
+        ad = res_discr_coef['ad']
+
+    if use_contour:  # find suitable contour for calculation of continuous spectrum
+        xi_d, bd, rd, ad, xi = get_cut_spectrum_and_contour(xi_d, bd, ad, rd, n_discrete_skip, xi_span, n_xi)
+
+    res_cont = get_continuous_spectrum(q, t, xi=xi, type=forward_continuous_type, xi_upsampling=xi_upsampling,
+                                       fnft_type=fnft_type, nft_type=nft_type,
+                                       res_poly=res_poly, coefficient_type='both')
+
+    a = res_cont['a']
+    b = res_cont['b']
+    b_right = res_cont['b_right']
+
+    if print_sys_message:
+        print('Number of discrete eigenvalues:', len(xi_d))
+
+
+    # in dimensionless units we have
+    # beta2 = -1.0
+    # gamma = 1.0
+
+    b_prop = b * np.exp(-2. * 1.0j * z_back * np.power(xi, 2))
+    b_prop_right = b_right * np.exp(2. * 1.0j * z_back * np.power(xi, 2))
+    bd_prop = bd * np.exp(-2. * 1.0j * z_back * np.power(xi_d, 2))
+    # bd_prop_left = np.conj(b_prop)
+
+    q_tib_total = []
+    q_left_part = []
+    q_right_part = []
+    # restore right q part with itib
+    if inverse_type == 'tib' or inverse_type == 'both':
+
+        q_right_part = make_itib_from_scattering(b_prop / a, xi, bd_prop / ad, xi_d, t, print_sys_message)
+        # restore left q part with itib
+        q_left_part = make_itib_from_scattering(b_prop_right / a, xi, 1.0 / bd_prop / ad, xi_d, t, print_sys_message)
+        # combine left and right parts
+        q_tib_total = np.concatenate((q_left_part[:len(t) // 2], np.conj(q_right_part[:len(t) // 2][::-1])))
+
+    q_fnft = []
+    # additionally we restore signal with inverse fnft
+    if inverse_type == 'fnft' or inverse_type == 'both':
+        res = nsev_inverse(xi, t, b_prop, xi_d, bd_prop / ad, cst=1, dst=0, dis=fnft_type)
+        q_fnft = res['q']
+
+    # if it will be required, one could return any other parameters
+    return {'q_total': q_tib_total,
+            'q_tib_left': q_left_part,
+            'q_tib_right': np.conj(q_right_part[::-1]),
+            'q_fnft': q_fnft,
+            'xi_d': xi_d,
+            'xi': xi,
+            'b_prop': b_prop,
+            'a': a,
+            'bd_prop': bd_prop,
+            'ad': ad}
+
+
+def make_dbp_nft(q, t, process_parameters):
+
+    """
+    Perform NFT backpropagation.
+
+    Args:
+        q: signal at spatial point z
+        t: time grid for signal
+        z_back: propagation distance z in dimensionless units
+        xi_upsampling: upsampling parameter for continuous nonlinear spectrum. len(xi) = xi_upsampling * len(q)
+        forward_continuous_type: type of calculation of continuous spectrum for forward NFT
+
+            - 'fnft' -- use FNFT to calculate continuous spectrum (real axe only!)
+            - 'fnftpoly' -- use polynomials from FNFT to calculate continuous spectrum (arbitrary contour)
+            - 'slow' -- use transfer matrices to calculate continuous spectrum (arbitrary contour)
+
+        forward_discrete_type:
+
+            - 'fnft' -- use FNFT to calculate discrete spectrum points (coefficients calculated automatically)
+            - 'pjt' -- use PJT (phase jump tracking)
+            - 'roots' -- not implemented (other procedures to find polynomial roots -> discrete spectrum points)
+
+        forward_discrete_coef_type:
+
+            - 'fnftpoly' -- use polynomial from FNFT to calculate spectral coefficients (b-coefficient is not stable for eigenvalues with bit imaginary part)
+            - 'bi-direct' -- use bi-directional algorithm (more stable for b-coefficient)
+
+        inverse_type: type for inverse NFT, default = 'both'
+
+            - 'both' -- both fnft (layer peeling with Darboux) and iTIB method
+            - 'fnft' -- fnft method (layer peeling with Darboux)
+            - 'tib' -- iTIB method, combination for left and right problems
+
+        fnft_type: type of FNFT calculation, default = 0
+        nft_type: default = 'bo', type of NFT transfer matricies for slow methods and bi-directional algorithm
+        use_contour: default = False, use arbitrary spectral contour in spectral space
+        n_discrete_skip: default = 10. If we use contour, how much discrete points rest
+        print_sys_message: print additional messages during calculation, default = False
+
+    Returns:
+        Dictionary with calculated signals in defined spatial point (-z_back)
+            - 'q_total' -- signal calculated with iTIB (combined left and right)
+            - 'q_tib_left' -- signal calculated with iTIB (left)
+            - 'q_tib_right' -- signal calculated with iTIB (right)
+            - 'q_fnft' -- signal calculated with fnft
+            -  xi_d' -- discrete spectrum points
+            - 'xi' -- spectral points
+            - 'b_prop' -- b-coefficients with corresponding propagated phase
+            - 'a' -- a-coefficient
+            - 'bd_prop' -- b-coefficient with corresponding propagated phase for discrete spectrum
+            - 'ad' -- :math:`\\partial a(\\xi) / \\partial \\xi` in discrete spectrum points :math:`\\xi_n`
+
+    """
+    # be careful, z_back is the distance for backward propagation
+    # to make forward use -z_back
+
+
+    z_back = process_parameters['z_prop']
+    xi_upsampling = process_parameters['xi_upsampling']
+    forward_continuous_type = process_parameters['forward_continuous_type']
+    forward_discrete_type = process_parameters['forward_discrete_type']
+    forward_discrete_coef_type = process_parameters['forward_discrete_coef_type']
+    inverse_type = process_parameters['inverse_type']
+    fnft_type = process_parameters['fnft_type']
+    nft_type = process_parameters['nft_type']
+    use_contour = process_parameters['use_contour']
+    n_discrete_skip = process_parameters['n_discrete_skip']
+    print_sys_message = process_parameters['print_sys_message']
+
 
     # define xi grid
     n_t = len(t)

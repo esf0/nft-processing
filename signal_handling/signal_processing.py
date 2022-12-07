@@ -1,5 +1,5 @@
 import numpy as np
-import signal_generation as sg
+import signal_handling.signal_generation as sg
 import nft_handling.nft_analyse as nft
 
 from scipy.fft import fft, ifft, fftfreq, fftshift, ifftshift

@@ -4,7 +4,7 @@ from scipy.fftpack import fft, ifft, fftfreq, fftshift, ifftshift
 from scipy.integrate import simps
 import matplotlib.pyplot as plt
 import matplotlib
-from ssfm import ssfm_dispersive_step
+from signal_handling.ssfm import ssfm_dispersive_step
 
 
 # sinc(t) = sin(pi * t) / (pi * t)
