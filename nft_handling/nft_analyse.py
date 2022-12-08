@@ -3,7 +3,7 @@ import FNFTpy
 
 reload(FNFTpy)
 from FNFTpy import nsev, nsev_poly
-from FNFTpy import nsev_inverse, nsev_inverse_xi_wrapper
+from FNFTpy import nsev_inverse, nsev_inverse_xi_wrapper, manakovv
 import numpy as np
 import scipy as sp
 from scipy.integrate import simps, trapz
@@ -26,9 +26,8 @@ from pjt import pjt
 
 import warnings
 from datetime import datetime
+from numba import jit, njit
 
-reload(sg)
-reload(FNFTpy)
 
 # from prettytable import PrettyTable
 
@@ -98,7 +97,7 @@ def get_rect(start, end, n_horizontal, n_vertical, n_top=-1):
 def get_rect_filled(start, end, n_horizontal, n_vertical):
     step_v = (end.imag - start.imag) / (n_vertical - 1)
     step_h = (end.real - start.real) / (n_horizontal - 1)
-    xi = np.zeros(n_vertical * n_horizontal, dtype=complex)
+    xi = np.zeros(n_vertical * n_horizontal, dtype=np.complex128)
     for i in range(n_vertical):
         for k in range(n_horizontal):
             xi[i * n_horizontal + k] = complex(start.real + step_h * k, start.imag + step_v * i)
@@ -195,7 +194,234 @@ def make_dtib(q, t, sign):
     # TODO: finish code
 
 
-def make_itib(omega, t, sigma=1):
+@njit
+def swap(a, b):
+    temp = a
+    a = b
+    b = temp
+
+    return a, b
+
+
+@njit
+def make_itib(omega, t, split_index=-1, sigma=1):
+    """
+    Inverse TIB algorithm to restore signal q form kernel
+
+    Args:
+        omega: Kernel function
+        t: time grid
+        sigma: defines focusing (+1) and defocusing (-1) cases
+
+    Returns:
+        q: restored signal in time points
+
+    """
+    # sigma = 1 focusing case
+    # sigma = -1 defocusing case
+
+    sigma = -1  # focusing / defocusing case = -1 / +1
+
+    dt = t[1] - t[0]
+    inv_dt = -2.0 / dt
+    n = len(t)
+    q = np.zeros(n, dtype=np.complex128)
+
+    q[0] = -2 * omega[0]
+
+    if split_index == -1:
+        split_index = n
+
+    r = omega.copy()
+
+    r *= dt
+
+    r[0] = r[0] / 2
+
+    y = np.zeros(n + 1, dtype=np.complex128)
+    y0 = np.zeros(n + 1, dtype=np.complex128)
+
+    z = np.zeros(n + 1, dtype=np.complex128)
+    z0 = np.zeros(n + 1, dtype=np.complex128)
+
+    y[0] = np.array(1.0 / (1 - sigma * r[0] * np.conj(r[0])))
+
+    z[0] = -r[0] * y[0]
+
+    r = r[::-1]
+
+    for m in range(1, split_index):
+        bet = np.sum(r[n - m - 1:n] * y[0:m + 1])
+
+        c_m = (1 / (1 - sigma * bet * np.conj(bet)))
+
+        d_m = -bet * c_m
+
+        y, y0 = swap(y, y0)
+        z, z0 = swap(z, z0)
+
+        y[0:m + 1] = c_m * y0[0:m + 1] + sigma * d_m * np.conj(z0[m::-1])
+
+        z[0:m + 1] = c_m * z0[0:m + 1] + d_m * np.conj(y0[m::-1])
+
+        q[m] = bet * inv_dt
+
+    return q
+
+
+@njit
+def make_itib_manakov(omega, t, split_index=-1, sigma=1):
+    """
+    Inverse TIB algorithm to restore signal q form kernel
+
+    Args:
+        omega: Kernel function
+        t: time grid
+        sigma: defines focusing (+1) and defocusing (-1) cases
+
+    Returns:
+        q: restored signal in time points
+
+    """
+    # sigma = 1 focusing case
+    # sigma = -1 defocusing case
+
+    sigma = -1  # focusing / defocusing case = -1 / +1
+
+    dt = t[1] - t[0]
+    inv_dt = -2.0 / dt
+    n = len(t)
+    q = np.zeros((2,n), dtype=np.complex128)
+
+    q[0][0] = -2 * omega[0][0]
+    q[1][0] = -2 * omega[1][0]
+
+    if split_index == -1:
+        split_index = n
+
+    r = omega.copy()
+
+    r *= dt
+
+    r[0][0] = r[0][0] / 2
+    r[1][0] = r[1][0] / 2
+
+    y = np.zeros(n + 1, dtype=np.complex128)
+    y0 = np.zeros(n + 1, dtype=np.complex128)
+
+    z = np.zeros((2, n + 1), dtype=np.complex128)
+    z0 = np.zeros((2, n + 1), dtype=np.complex128)
+
+    y[0] = np.array(1.0 / (1 - sigma * (r[0][0] * np.conj(r[0][0]) + r[1][0] * np.conj(r[1][0]))))
+
+    z[:, 0] = -r[:, 0] * y[0]
+
+    r = r[:, ::-1]
+
+    for m in range(1, split_index):
+        bet0 = np.sum(r[0][n - m - 1:n] * y[0:m + 1])
+        bet1 = np.sum(r[1][n - m - 1:n] * y[0:m + 1])
+
+        c_m = (1 / (1 - sigma * (bet0 * np.conj(bet0) + bet1 * np.conj(bet1))))
+
+        d_m0 = -bet0 * c_m
+        d_m1 = -bet1 * c_m
+
+        y, y0 = swap(y, y0)
+        z, z0 = swap(z, z0)
+
+        y[0:m + 1] = c_m * y0[0:m + 1] + sigma * (d_m0 * np.conj(z0[0][m::-1]) + d_m1 * np.conj(z0[1][m::-1]))
+
+        z[0][0:m + 1] = c_m * z0[0][0:m + 1] + d_m0 * np.conj(y0[m::-1])
+        z[1][0:m + 1] = c_m * z0[1][0:m + 1] + d_m1 * np.conj(y0[m::-1])
+
+        q[0][m] = bet0 * inv_dt
+        q[1][m] = bet1 * inv_dt
+
+    return q
+
+
+# Does not work, find mistakes
+@njit
+def make_itib_multidim(omega, t, split_index=-1, sigma=1):
+    """
+    Inverse TIB algorithm to restore signal q form kernel
+
+    Args:
+        omega: Kernel function
+        t: time grid
+        split_index: index for splitting of the signal into the left and right parts
+        sigma: defines focusing (+1) and defocusing (-1) cases
+
+    Returns:
+        q: restored signal in time points
+
+    """
+    # sigma = 1 focusing case
+    # sigma = -1 defocusing case
+
+    sigma = -1  # focusing / defocusing case = -1 / +1
+
+    dt = t[1] - t[0]
+    inv_dt = -2.0 / dt
+    n = len(t)
+    n_eq = len(omega)
+
+    if split_index == -1:
+        split_index = n
+
+    q = np.zeros((n_eq, n), dtype=np.complex128)
+
+    y = np.zeros(n + 1, dtype=np.complex128)
+    y0 = np.zeros(n + 1, dtype=np.complex128)
+
+    z = np.zeros((n_eq, n + 1), dtype=np.complex128)
+    z0 = np.zeros((n_eq, n + 1), dtype=np.complex128)
+
+    r = omega.copy()
+
+    r *= dt
+
+    for eq in range(n_eq):
+        r[eq][0] = r[eq][0] / 2
+
+    for eq in range(n_eq):
+        q[eq][0] = -2 * omega[eq][0]
+
+    y[0] = np.array(1.0 / (1 - sigma * np.sum(r[eq][0] * np.conj(r[eq][0]))))
+
+    for eq in range(n_eq):
+        z[eq][0] = -r[eq][0] * y[0]
+
+    r = np.flip(r, axis=1)
+
+    for m in range(1, split_index):
+        bet = np.zeros((n_eq, 1), dtype=np.complex128)
+        for eq in range(n_eq):
+            bet[eq] += np.sum(r[eq][n - m - 1:n] * y[0:m + 1])
+
+        c_m = 1 / (1 - sigma * np.sum(bet * np.conj(bet)))
+
+        d_m = -bet * c_m
+
+        y, y0 = swap(y, y0)
+        z, z0 = swap(z, z0)
+
+        y[0:m + 1] = c_m * y0[0:m + 1]
+        for eq in range(n_eq):
+            y[0:m + 1] += sigma * np.sum(d_m[eq] * np.conj(z0[eq][m::-1]))
+
+        for eq in range(n_eq):
+            z[eq][0:m + 1] = c_m * z0[eq][0:m + 1] + d_m[eq] * np.conj(y0[m::-1])
+
+        for eq in range(n_eq):
+            q[eq][m] = bet[eq] * inv_dt
+
+    return q
+
+
+# noinspection PyShadowingBuiltins
+def make_itib_egor(omega, t, sigma=1):
     """
     Inverse TIB algorithm to restore signal q form kernel
 
@@ -213,16 +439,16 @@ def make_itib(omega, t, sigma=1):
     n_t = len(t)
     dt = t[1] - t[0]
 
-    q = np.zeros(n_t, dtype=complex)
+    q = np.zeros(n_t, dtype=np.complex128)
     q[0] = -2.0 * omega[0]
 
-    # y = np.zeros(n_t, dtype=complex)
-    # z = np.zeros(n_t, dtype=complex)
+    # y = np.zeros(n_t, dtype=np.complex128)
+    # z = np.zeros(n_t, dtype=np.complex128)
 
     y_prev = np.array([1.0 / (1.0 + sigma * dt ** 2 * np.absolute(omega[0]) ** 2 / 4.0)])
     z_prev = np.array([-0.5 * y_prev[0] * dt * omega[0]])
 
-    beta = np.zeros(n_t, dtype=complex)
+    beta = np.zeros(n_t, dtype=np.complex128)
 
     for m in range(1, n_t):
 
@@ -251,7 +477,7 @@ def make_itib_other(omega, t, sigma=1):
     n_t = len(t)
     dt = t[1] - t[0]
 
-    q = np.zeros(n_t, dtype=complex)
+    q = np.zeros(n_t, dtype=np.complex128)
     omega = omega * 2.0 * dt
 
     q[0] = -omega[0]
@@ -276,22 +502,25 @@ def make_itib_other(omega, t, sigma=1):
     return q
 
 
-def make_itib_from_scattering(r, xi, rd, xi_d, t, print_sys_message=False):
-
+def make_itib_from_scattering(r, xi, rd, xi_d, t, split_index, direction='left', print_sys_message=False):
     coef_t = 2.0
 
     start_time = datetime.now()
-    omega_r = get_omega_continuous(r, xi, coef_t * t)
+    omega_r = get_omega_continuous(r, xi, coef_t * t, direction)
     if print_sys_message:
-        print_calc_time(start_time, 'continuous part of z-chirp')
+        print_calc_time(start_time, 'continuous part of Omega')
 
     start_time = datetime.now()
     omega_d = get_omega_discrete(rd, xi_d, coef_t * t)
     if print_sys_message:
-        print_calc_time(start_time, 'discrete part of z-chirp')
+        print_calc_time(start_time, 'discrete part of Omega')
 
     start_time = datetime.now()
-    q_tib = make_itib(omega_d + omega_r, coef_t * t)
+
+    if len(r) == 1:
+        q_tib = make_itib(omega_d[0] + omega_r[0], coef_t * t, split_index)
+    if len(r) == 2:
+        q_tib = make_itib_manakov(omega_d + omega_r, coef_t * t, split_index)
     if print_sys_message:
         print_calc_time(start_time, 'TIB')
 
@@ -324,9 +553,9 @@ def do_bi_direct(q, t, xi, type='orig'):
     n = len(q)
     t_span = t[-1] - t[0]
 
-    x = np.zeros((n + 1, 2), dtype=complex)
-    xd = np.zeros((n + 1, 2), dtype=complex)
-    y = np.zeros((n + 1, 2), dtype=complex)
+    x = np.zeros((n + 1, 2), dtype=np.complex128)
+    xd = np.zeros((n + 1, 2), dtype=np.complex128)
+    y = np.zeros((n + 1, 2), dtype=np.complex128)
 
     if type == 'orig':
         x[0] = np.array([1, 0])
@@ -393,7 +622,7 @@ def do_bi_direct(q, t, xi, type='orig'):
 
 def do_bi_direct_array(q, t, xi, type='orig'):
     """
-    Bi-directional algorithm to calculate residues and norming constants for array of discrete spectrum points
+    Bidirectional algorithm to calculate residues and norming constants for array of discrete spectrum points
 
     Args:
         q: signal
@@ -402,7 +631,7 @@ def do_bi_direct_array(q, t, xi, type='orig'):
         type: type of calculation scheme
 
             - 'orig' -- Ablowitz-Ladik scheme
-            - 'bo' -- Bofetta-Osborne
+            - 'bo' -- Boffetta-Osborne
             - 'tes4' -- TES4
             - 'es4' -- ES4
 
@@ -413,9 +642,9 @@ def do_bi_direct_array(q, t, xi, type='orig'):
 
     """
     n_xi = len(xi)
-    b = np.zeros(n_xi, dtype=complex)
-    r = np.zeros(n_xi, dtype=complex)
-    ad = np.zeros(n_xi, dtype=complex)
+    b = np.zeros(n_xi, dtype=np.complex128)
+    r = np.zeros(n_xi, dtype=np.complex128)
+    ad = np.zeros(n_xi, dtype=np.complex128)
     for k in range(n_xi):
         b[k], r[k], ad[k] = do_bi_direct(q, t, xi[k], type)
 
@@ -424,7 +653,7 @@ def do_bi_direct_array(q, t, xi, type='orig'):
 
 def do_bi_direct_arbitrary(q, t, xi, type='orig'):
     """
-        Bi-directional algorithm to calculate b-coefficient for arbitrary spectral point
+        Bidirectional algorithm to calculate b-coefficient for arbitrary spectral point
 
         Args:
             q: signal
@@ -448,9 +677,9 @@ def do_bi_direct_arbitrary(q, t, xi, type='orig'):
     n = len(q)
     t_span = t[-1] - t[0]
 
-    x = np.zeros((n + 1, 2), dtype=complex)
-    xd = np.zeros((n + 1, 2), dtype=complex)
-    y = np.zeros((n + 1, 2), dtype=complex)
+    x = np.zeros((n + 1, 2), dtype=np.complex128)
+    xd = np.zeros((n + 1, 2), dtype=np.complex128)
+    y = np.zeros((n + 1, 2), dtype=np.complex128)
 
     if type == 'orig':
         x[0] = np.array([1, 0])
@@ -527,7 +756,7 @@ def do_bi_direct_arbitrary(q, t, xi, type='orig'):
 
 def do_bi_direct_arbitrary_array(q, t, xi, type='orig'):
     """
-    Bi-directional algorithm to calculate residues and norming constants for array of discrete spectrum points
+    Bidirectional algorithm to calculate residues and norming constants for array of discrete spectrum points
 
     Args:
         q: signal
@@ -536,7 +765,7 @@ def do_bi_direct_arbitrary_array(q, t, xi, type='orig'):
         type: type of calculation scheme
 
             - 'orig' -- Ablowitz-Ladik scheme
-            - 'bo' -- Bofetta-Osborne
+            - 'bo' -- Boffetta-Osborne
             - 'tes4' -- TES4
             - 'es4' -- ES4
 
@@ -547,10 +776,10 @@ def do_bi_direct_arbitrary_array(q, t, xi, type='orig'):
 
     """
     n_xi = len(xi)
-    a = np.zeros(n_xi, dtype=complex)
-    b = np.zeros(n_xi, dtype=complex)
-    # r = np.zeros(n_xi, dtype=complex)
-    # ad = np.zeros(n_xi, dtype=complex)
+    a = np.zeros(n_xi, dtype=np.complex128)
+    b = np.zeros(n_xi, dtype=np.complex128)
+    # r = np.zeros(n_xi, dtype=np.complex128)
+    # ad = np.zeros(n_xi, dtype=np.complex128)
     for k in range(n_xi):
         a[k], b[k] = do_bi_direct_arbitrary(q, t, xi[k], type)
 
@@ -575,7 +804,7 @@ def get_pauli_coefficients(m):
     # a2 = 1j / 2 * (m[0][1] - m[1][0])
     # a3 = 1 / 2 * (m[0][0] - m[1][1])
 
-    a = np.zeros(4, dtype=complex)
+    a = np.zeros(4, dtype=np.complex128)
     a[0] = 1 / 2 * (m[0][0] + m[1][1])
     a[1] = 1 / 2 * (m[0][1] + m[1][0])
     a[2] = 1j / 2 * (m[0][1] - m[1][0])
@@ -636,10 +865,10 @@ def get_transfer_matrix(q, dt, n, xi, type='bo', sigma=1):
         xi: spectral parameter
 
     Optional Args:
-        type: type of calculation, default = 'bo' -- Bofetta-Osborne
+        type: type of calculation, default = 'bo' -- Boffetta-Osborne
 
-            - bo -- Bofetta-Osborne
-            - bod -- Bofetta-Osborne with da / dxi
+            - bo -- Boffetta-Osborne
+            - bod -- Boffetta-Osborne with da / dxi
             - tes4 -- TES4
             - tes4d -- TES4 with da / dxi
             - es4 -- ES4
@@ -674,7 +903,7 @@ def get_transfer_matrix(q, dt, n, xi, type='bo', sigma=1):
 
             _k2 = np.power(k, -2)
             xi2_k2 = np.power(xi, 2) * _k2
-            t_matrix = np.zeros((2, 2), dtype=complex)
+            t_matrix = np.zeros((2, 2), dtype=np.complex128)
             t_matrix[0][0] = 1.0j * dt * xi2_k2 * cosh_k - (xi * dt + 1.0j * (1.0 + xi2_k2)) * sinh_k * _k
             t_matrix[0][1] = -q[n] * xi * _k2 * (dt * cosh_k - sinh_k * _k)
             t_matrix[1][0] = sigma * np.conj(q[n]) * xi * _k2 * (dt * cosh_k - sinh_k * _k)
@@ -751,10 +980,10 @@ def get_scattering(q, t, xi, type='bo', sigma=1):
         xi: spectral parameter where we calculate coefficients
 
     Optional Args:
-        type: type of calculation, default = 'bo' -- Bofetta-Osborne
+        type: type of calculation, default = 'bo' -- Boffetta-Osborne
 
-            - bo -- Bofetta-Osborne
-            - bod -- Bofetta-Osborne with :math:`\\partial a(\\xi) / \\partial \\xi`
+            - bo -- Boffetta-Osborne
+            - bod -- Boffetta-Osborne with :math:`\\partial a(\\xi) / \\partial \\xi`
             - tes4 -- TES4
             - tes4d -- TES4 with :math:`\\partial a(\\xi) / \\partial \\xi`
             - es4 -- ES4
@@ -823,10 +1052,10 @@ def get_scattering_array(q, t, xi, type='bo', sigma=1):
             xi: array of spectral parameters where we calculate coefficients
 
         Optional Args:
-            type: type of calculation, default = 'bo' -- Bofetta-Osborne
+            type: type of calculation, default = 'bo' -- Boffetta-Osborne
 
-                - bo -- Bofetta-Osborne
-                - bod -- Bofetta-Osborne with da / dxi
+                - bo -- Boffetta-Osborne
+                - bod -- Boffetta-Osborne with da / dxi
                 - tes4 -- TES4
                 - tes4d -- TES4 with da / dxi
                 - es4 -- ES4
@@ -839,10 +1068,10 @@ def get_scattering_array(q, t, xi, type='bo', sigma=1):
 
     """
     n_xi = len(xi)
-    a = np.zeros(n_xi, dtype=complex)
-    b = np.zeros(n_xi, dtype=complex)
+    a = np.zeros(n_xi, dtype=np.complex128)
+    b = np.zeros(n_xi, dtype=np.complex128)
     if type[-1] == 'd':
-        ad = np.zeros(n_xi, dtype=complex)
+        ad = np.zeros(n_xi, dtype=np.complex128)
         for k in range(n_xi):
             a[k], b[k], ad[k] = get_scattering(q, t, xi[k], type, sigma)
 
@@ -870,10 +1099,10 @@ def test_nft(ampl, chirp, t_span, n_t, n_grid, type='bo', fnft_type=11, plot_fla
         n_grid: number of different n_xi
 
     Optional Args:
-        type: type of calculation, default = 'bo' -- Bofetta-Osborne
+        type: type of calculation, default = 'bo' -- Boffetta-Osborne
 
-                - bo -- Bofetta-Osborne
-                - bod -- Bofetta-Osborne with da / dxi
+                - bo -- Boffetta-Osborne
+                - bod -- Boffetta-Osborne with da / dxi
                 - tes4 -- TES4
                 - tes4d -- TES4 with da / dxi
                 - es4 -- ES4
@@ -897,8 +1126,8 @@ def test_nft(ampl, chirp, t_span, n_t, n_grid, type='bo', fnft_type=11, plot_fla
 
     q, a_xi, b_xi, xi_discr, b_discr, r_discr, ad_discr = test_signals.get_sech(t, xi, a=ampl, c=chirp)
 
-    a = np.zeros((n_grid, n_xi), dtype=complex)
-    b = np.zeros((n_grid, n_xi), dtype=complex)
+    a = np.zeros((n_grid, n_xi), dtype=np.complex128)
+    b = np.zeros((n_grid, n_xi), dtype=np.complex128)
 
     for k in range(n_grid):
         n_t_current = n_t * 2 ** k
@@ -969,7 +1198,8 @@ def test_nft(ampl, chirp, t_span, n_t, n_grid, type='bo', fnft_type=11, plot_fla
         axs[1].legend()
 
 
-def get_omega_continuous(r, xi, t):
+# @njit
+def get_omega_continuous(r, xi, t, direction='left', use_fft=True):
     """
         Calculate kernel of spectrum coefficient r(xi).
         For xi on real axe it corresponds to continuous spectrum part.
@@ -986,23 +1216,71 @@ def get_omega_continuous(r, xi, t):
     """
     d_xi = xi[1] - xi[0]
     n_t = len(t)
-    omega_r = np.zeros(n_t, dtype=complex)
-    for j in range(n_t):
-        exp_xi_t = np.exp(-1.0j * t[j] * xi)
-        x = r * exp_xi_t
-        # omega_r[j] = 0.5 / np.pi * trapz(x, dx=d_xi)  # trapz method to integrate
+    n_eq = len(r)
 
-        omega_r[j] = 0.5 / np.pi * 0.5 * (np.sum(x[0:len(x) - 1]) + np.sum(x[1:len(x)])) * d_xi  # middle Riemann sum
+    omega_r = np.zeros((n_eq, n_t), dtype=np.complex128)
+
+    if use_fft:
+
+        n_xi = len(xi)
+        omega_r_upsampled = np.zeros((n_eq, n_xi), dtype=np.complex128)
+
+        if direction == 'left':
+            # omega_r = fftshift(fft(np.roll(np.conj(r), 0))) / d_t / n_t / 2 / np.pi
+            # omega_r = omega_r[::-1]
+            # for i in range(len(omega_r)):
+            #     if not i % 2:
+            #         omega_r[i] = - omega_r[i]
+            #
+            # omega_r = np.conj(omega_r)
+
+            for eq in range(n_eq):
+                omega_r_upsampled[eq] = fftshift(ifft(np.roll(np.conj(r[eq]), 1))) / d_t
+
+            for eq in range(n_eq):
+                for i in range(n_xi):
+                    if i % 2:
+                        omega_r_upsampled[eq][i] = - omega_r_upsampled[eq][i]
+            omega_r_upsampled = np.conj(omega_r_upsampled)
+
+        elif direction == 'right':
+            for eq in range(n_eq):
+                omega_r_upsampled[eq] = fftshift(ifft(np.roll(r[eq], 1))) / d_t
+            omega_r_upsampled = omega_r_upsampled[:, ::-1]
+
+            for eq in range(n_eq):
+                for i in range(n_xi):
+                    if not i % 2:
+                        omega_r_upsampled[eq][i] = - omega_r_upsampled[eq][i]
+
+        else:
+            print("make_itib_from_scattering: non-existing parameter!")
+
+        omega_r = omega_r_upsampled[:, int((n_xi - n_t) / 2):int((n_xi + n_t) / 2)]
+
+    else:
+        c = 0.5 / np.pi * 0.5 * d_xi
+        print(d_xi)
+        for j in range(n_t):
+            exp_xi_t = np.exp(-1.0j * t[j] * xi)
+
+            for eq in range(n_eq):
+                x = r[eq] * exp_xi_t
+                # omega_r[j] = 0.5 / np.pi * trapz(x, dx=d_xi)  # trapz method to integrate
+
+                omega_r[eq][j] = 2 * c * np.sum(x)  # left Riemann sum
+                # omega_r[eq][j] = c * (np.sum(x[0:len(x) - 1]) + np.sum(x[1:len(x)]))  # middle Riemann sum
 
     return omega_r
 
 
-def get_omega_discrete(r, xi, t):
+@njit
+def get_omega_discrete(r_n, xi, t):
     """
         Calculate kernel of spectrum coefficients r_n(xi_n) for discrete spectrum.
 
         Args:
-            r: spectrum coefficient r_n in discrete spectrum points xi_n
+            r_n: spectrum coefficients r_n in discrete spectrum points xi_n
             xi: discrete spectrum points
             t: time grid
 
@@ -1012,10 +1290,11 @@ def get_omega_discrete(r, xi, t):
         """
     n_xi = len(xi)
     n_t = len(t)
-    omega_d = np.zeros(n_t, dtype=complex)
-    for j in range(n_xi):
-        # omega_d += r[j] * np.exp(-1.0j * t * xi[j])
-        omega_d -= 1.0j * r[j] * np.exp(-1.0j * t * xi[j])
+    n_eq = len(r_n)
+    omega_d = np.zeros((n_eq, n_t), dtype=np.complex128)
+    for eq in range(n_eq):
+        for j in range(n_xi):
+            omega_d[eq] -= 1.0j * r_n[eq][j] * np.exp(-1.0j * t * xi[j])
 
     return omega_d
 
@@ -1026,7 +1305,7 @@ def get_contour_integral(order, contour, a, ad):
 
 def get_poly_coefficients(s_values):
     n = len(s_values)
-    p_coef = np.zeros(n, dtype=complex)
+    p_coef = np.zeros(n, dtype=np.complex128)
     p_coef[0] = -s_values[0]
     for i in range(1, n):
         p_coef[i] = -1.0 / (i + 1) * (s_values[i] + np.dot(s_values[:i], p_coef[:i][::-1]))
@@ -1043,7 +1322,7 @@ def get_roots_contour(q, t, contour, type='bo', a_coefficients=None, ad_coeffici
     # Interesting fact: if we add 1 to n_discrete (fake root xi = 0), accuracy increases
     # print(n_discrete)
 
-    s_values = np.zeros(n_discrete, dtype=complex)
+    s_values = np.zeros(n_discrete, dtype=np.complex128)
     for i in range(n_discrete):
         s_values[i] = get_contour_integral(i + 1, contour, a_coefficients, ad_coefficients)
 
@@ -1169,12 +1448,12 @@ def make_dbp_nft_two_intervals(q_small, t_small, q_big, t_big, z_back, xi_upsamp
             'q_fnft': q_fnft}
 
 
-def make_dbp_fnft(q, t, z_back, xi_upsampling=1, inverse_type='both', fnft_type=11, print_sys_message=False):
+def make_dbp_fnft(t, z_back, xi_upsampling=1, inverse_type='both', fnft_type=11, print_sys_message=False, *q):
     """
     Perform NFT backpropagation with FNFT for forward and FNFT/TIB for inverse transform
 
     Args:
-        q: signal at spatial point z
+        q: signal at spatial point z for NLSE or two signals q1,q2 for Manakov's equations
         t: time grid for signal
         z_back: propagation distance z in dimensionless units
         xi_upsampling: upsampling parameter for continuous nonlinear spectrum. len(xi) = xi_upsampling * len(q)
@@ -1209,26 +1488,49 @@ def make_dbp_fnft(q, t, z_back, xi_upsampling=1, inverse_type='both', fnft_type=
     # make direct nft
     start_time = datetime.now()
     # res = nsev(q, t, xi[0], xi[-1], n_xi, dst=2, cst=2, dis=19)
-    res = nsev(q, t, xi[0], xi[-1], n_xi, dst=2, cst=2, dis=fnft_type, K=1024)
+    if len(q) == 1:
+        res = nsev(q[0], t, xi[0], xi[-1], n_xi, dst=2, cst=2, dis=fnft_type, K=2048, display_c_msg=True)
+    elif len(q) == 2:
+        res = manakovv(q[0], q[1], t, xi[0], xi[-1], n_xi, dst=2, cst=2, dis=fnft_type, K=2048, display_c_msg=True)
+    else:
+        print("This number of equation is not supported yet:", len(q))
     if print_sys_message:
         print_calc_time(start_time, 'direct NFT')
 
     if res['return_value'] != 0:
         print('[make_dbp_nft] Error: fnft failed!')
-        q_total = np.zeros((len(q)), dtype=complex)
-        q_fnft = np.zeros((len(q)), dtype=complex)
+        q_total = np.zeros((np.shape(q)), dtype=np.complex128)
+        q_fnft = np.zeros((np.shape(q)), dtype=np.complex128)
 
-        return {'q_total': q_total,
-                'q_fnft': q_fnft,
-                'error': res['return_value']}
+        if len(q) == 1:
+            return {'q_total': q_total[0],
+                    'q_fnft': q_fnft[0],
+                    'error': res['return_value']}
+        elif len(q) == 2:
+            return {'q1_total': q_total[0],
+                    'q2_total': q_total[1],
+                    'q1_fnft': q_fnft[0],
+                    'q2_fnft': q_fnft[1],
+                    'error': res['return_value']}
+        else:
+            return
 
-    rd = res['disc_res']
-    bd = res['disc_norm']
-    r = res['cont_ref']
-    a = res['cont_a']
-    b = res['cont_b']
-    xi_d = res['bound_states']
-    ad = bd / rd
+    if len(q) == 1:
+        rd = res['disc_res']
+        bd = res['disc_norm']
+        r = res['cont_ref']
+        a = res['cont_a']
+        b = res['cont_b']
+        xi_d = res['bound_states']
+        ad = bd / rd
+    elif len(q) == 2:
+        rd = res['disc_res']  # They are not computed in the current version of FNFT
+        bd = res['disc_norm']
+        r = (res['cont_ref1'], res['cont_ref2'])
+        a = res['cont_a']
+        b = (res['cont_b1'], res['cont_b2'])
+        xi_d = res['bound_states']
+        ad = bd / rd
 
     if print_sys_message:
         print('Number of discrete eigenvalues:', len(xi_d))
@@ -1325,7 +1627,7 @@ def make_dbp_fnft(q, t, z_back, xi_upsampling=1, inverse_type='both', fnft_type=
     # other idea is to play with coef_t, it can numerically give some gain, but I did not try it yet
 
 
-def make_dbp_nft_old(q, t, z_back, xi_upsampling=1,
+def make_dbp_nft_old(t, z_back, *q, xi_upsampling=1,
                      forward_continuous_type='fnft',
                      forward_discrete_type='fnft',
                      forward_discrete_coef_type='fnftpoly',
@@ -1339,7 +1641,7 @@ def make_dbp_nft_old(q, t, z_back, xi_upsampling=1,
     Args:
         q: signal at spatial point z
         t: time grid for signal
-        z_back: propagation distance z in dimensionless units
+        z_back: backward propagation distance z in dimensionless units
         xi_upsampling: upsampling parameter for continuous nonlinear spectrum. len(xi) = xi_upsampling * len(q)
         forward_continuous_type: type of calculation of continuous spectrum for forward NFT
 
@@ -1355,7 +1657,8 @@ def make_dbp_nft_old(q, t, z_back, xi_upsampling=1,
 
         forward_discrete_coef_type:
 
-            - 'fnftpoly' -- use polynomial from FNFT to calculate spectral coefficients (b-coefficient is not stable for eigenvalues with bit imaginary part)
+            - 'fnftpoly' -- use polynomial from FNFT to calculate spectral coefficients (b-coefficient is not stable for
+             eigenvalues with large imaginary part)
             - 'bi-direct' -- use bi-directional algorithm (more stable for b-coefficient)
 
         inverse_type: type for inverse NFT, default = 'both'
@@ -1395,29 +1698,50 @@ def make_dbp_nft_old(q, t, z_back, xi_upsampling=1,
 
     n_xi = xi_upsampling * n_t
 
-    rv, xi_val = nsev_inverse_xi_wrapper(n_t, t[0], t[-1], n_xi)
-    xi = xi_val[0] + np.arange(n_xi) * (xi_val[1] - xi_val[0]) / (n_xi - 1)
-    xi_span = xi_val[1] - xi_val[0]
+    # rv, xi_val = nsev_inverse_xi_wrapper(n_t, t[0], t[-1], n_xi)
+    # print(xi_val)
+    # xi = xi_val[0] + np.arange(n_xi) * (xi_val[1] - xi_val[0]) / (n_xi - 1)
+    # xi_span = xi_val[1] - xi_val[0]
+
+    xi_span = np.pi / dt
+    d_xi = xi_span / n_xi
+    xi = np.array([(i + 1) * d_xi - xi_span / 2. for i in range(n_xi)])
+    # print(xi[0], xi[-1])
 
     # if we want to use root finding procedure for polynomial, we should calculate coefficients
     res_poly = None
     if forward_continuous_type == 'fnftpoly' or forward_discrete_coef_type == 'fnftpoly':
-        res_poly = nsev_poly(q, t, dis=fnft_type)
+        res_poly = nsev_poly(q[0], t, dis=fnft_type)
 
     # here we calculate discrete spectrum
-    res_discr = get_discrete_eigenvalues(q, t, type=forward_discrete_type, xi_upsampling=xi_upsampling,
+    start_time = datetime.now()
+    res_discr = get_discrete_eigenvalues(t, *q, type=forward_discrete_type, xi_upsampling=xi_upsampling,
                                          max_discrete_points=2048, res_poly=res_poly)
+    if print_sys_message:
+        print_calc_time((datetime.now() - start_time).microseconds * 1000, 'discrete spectrum')
+
     xi_d = res_discr['discrete_spectrum']
 
-    if forward_discrete_type == 'fnft':  # norming constants and residues already calculated
+    if forward_discrete_type == 'fnft' or forward_discrete_type == 'pjt':  # norming constants and residues already calculated
         bd = res_discr['disc_norm']
         rd = res_discr['disc_res']
-        ad = bd / rd
+        bd_right = res_discr['disc_norm_right']
+        rd_right = res_discr['disc_res_right']
 
-    if (forward_discrete_type == 'fnft' and forward_discrete_coef_type != 'fnft') or forward_discrete_type != 'fnft':
+        ad = []
+        if len(bd) > 0:
+            ad = np.zeros(len(rd[0]), dtype=np.complex128)
+            for i in range(len(rd[0])):
+                if np.abs(rd[0][i]) > 1e-15:
+                    ad[i] = bd[0][i] / rd[0][i]
+                else:
+                    ad[i] = bd[1][i] / rd[1][i]
+
+    if (forward_discrete_type == 'fnft' and forward_discrete_coef_type != 'fnft') \
+            or (forward_discrete_type != 'fnft' and forward_discrete_type != 'pjt'):
         # we have to calculate coefficients
         # even if we have already calculated with fnft but want use other type of calculation of coefficients
-        res_discr_coef = get_discrete_spectrum_coefficients(q, t, xi_d, type=forward_discrete_coef_type,
+        res_discr_coef = get_discrete_spectrum_coefficients(q[0], t, xi_d, type=forward_discrete_coef_type,
                                                             type_coef='orig', fnft_type=fnft_type, res_poly=res_poly)
         bd = res_discr_coef['bd']
         rd = res_discr_coef['rd']
@@ -1426,9 +1750,12 @@ def make_dbp_nft_old(q, t, z_back, xi_upsampling=1,
     if use_contour:  # find suitable contour for calculation of continuous spectrum
         xi_d, bd, rd, ad, xi = get_cut_spectrum_and_contour(xi_d, bd, ad, rd, n_discrete_skip, xi_span, n_xi)
 
-    res_cont = get_continuous_spectrum(q, t, xi=xi, type=forward_continuous_type, xi_upsampling=xi_upsampling,
+    start_time = datetime.now()
+    res_cont = get_continuous_spectrum(t, *q, xi=xi, type=forward_continuous_type, xi_upsampling=xi_upsampling,
                                        fnft_type=fnft_type, nft_type=nft_type,
                                        res_poly=res_poly, coefficient_type='both')
+    if print_sys_message:
+        print_calc_time((datetime.now() - start_time).microseconds * 1000, 'continuous spectrum')
 
     a = res_cont['a']
     b = res_cont['b']
@@ -1437,7 +1764,6 @@ def make_dbp_nft_old(q, t, z_back, xi_upsampling=1,
     if print_sys_message:
         print('Number of discrete eigenvalues:', len(xi_d))
 
-
     # in dimensionless units we have
     # beta2 = -1.0
     # gamma = 1.0
@@ -1445,197 +1771,54 @@ def make_dbp_nft_old(q, t, z_back, xi_upsampling=1,
     b_prop = b * np.exp(-2. * 1.0j * z_back * np.power(xi, 2))
     b_prop_right = b_right * np.exp(2. * 1.0j * z_back * np.power(xi, 2))
     bd_prop = bd * np.exp(-2. * 1.0j * z_back * np.power(xi_d, 2))
+    bd_right_prop = bd_right * np.exp(2. * 1.0j * z_back * np.power(xi_d, 2))
     # bd_prop_left = np.conj(b_prop)
 
     q_tib_total = []
     q_left_part = []
     q_right_part = []
+
     # restore right q part with itib
     if inverse_type == 'tib' or inverse_type == 'both':
+        start_time = datetime.now()
 
-        q_right_part = make_itib_from_scattering(b_prop / a, xi, bd_prop / ad, xi_d, t, print_sys_message)
+        split_index = int(n_t / 2)
+
         # restore left q part with itib
-        q_left_part = make_itib_from_scattering(b_prop_right / a, xi, 1.0 / bd_prop / ad, xi_d, t, print_sys_message)
+        q_left_part = make_itib_from_scattering(b_prop_right / a, xi, bd_right_prop / ad, xi_d, t,
+                                                split_index, 'left', print_sys_message)
+        # restore right q part with itib
+        q_right_part = np.conj(np.flip(make_itib_from_scattering(b_prop / a, xi, bd_prop / ad, xi_d, t[::-1] * -1,
+                                                         n_t - split_index, 'right', print_sys_message), axis=-1))
         # combine left and right parts
-        q_tib_total = np.concatenate((q_left_part[:len(t) // 2], np.conj(q_right_part[:len(t) // 2][::-1])))
+        if len(q) == 1:
+            q_tib_total = np.concatenate((q_left_part[:split_index], q_right_part[split_index:]))
+        else:
+            q_tib_total = np.concatenate((q_left_part[:, :split_index], q_right_part[:, split_index:]), axis=1)
+
+        if print_sys_message:
+            print_calc_time(start_time, 'all TIBs')
 
     q_fnft = []
     # additionally we restore signal with inverse fnft
-    if inverse_type == 'fnft' or inverse_type == 'both':
-        res = nsev_inverse(xi, t, b_prop, xi_d, bd_prop / ad, cst=1, dst=0, dis=fnft_type)
+    if len(q) == 1 and (inverse_type == 'fnft' or inverse_type == 'both'):
+        start_time = datetime.now()
+        res = nsev_inverse(np.roll(xi, 0), t, np.roll(b_prop, 0), xi_d, bd_prop, cst=1, dst=0)
         q_fnft = res['q']
+        if print_sys_message:
+            print_calc_time((datetime.now() - start_time).microseconds * 1000, 'inverse FNFT')
 
     # if it will be required, one could return any other parameters
     return {'q_total': q_tib_total,
             'q_tib_left': q_left_part,
-            'q_tib_right': np.conj(q_right_part[::-1]),
+            'q_tib_right': q_right_part,
             'q_fnft': q_fnft,
             'xi_d': xi_d,
             'xi': xi,
             'b_prop': b_prop,
             'a': a,
             'bd_prop': bd_prop,
-            'ad': ad}
-
-
-def make_dbp_nft(q, t, process_parameters):
-
-    """
-    Perform NFT backpropagation.
-
-    Args:
-        q: signal at spatial point z
-        t: time grid for signal
-        z_back: propagation distance z in dimensionless units
-        xi_upsampling: upsampling parameter for continuous nonlinear spectrum. len(xi) = xi_upsampling * len(q)
-        forward_continuous_type: type of calculation of continuous spectrum for forward NFT
-
-            - 'fnft' -- use FNFT to calculate continuous spectrum (real axe only!)
-            - 'fnftpoly' -- use polynomials from FNFT to calculate continuous spectrum (arbitrary contour)
-            - 'slow' -- use transfer matrices to calculate continuous spectrum (arbitrary contour)
-
-        forward_discrete_type:
-
-            - 'fnft' -- use FNFT to calculate discrete spectrum points (coefficients calculated automatically)
-            - 'pjt' -- use PJT (phase jump tracking)
-            - 'roots' -- not implemented (other procedures to find polynomial roots -> discrete spectrum points)
-
-        forward_discrete_coef_type:
-
-            - 'fnftpoly' -- use polynomial from FNFT to calculate spectral coefficients (b-coefficient is not stable for eigenvalues with bit imaginary part)
-            - 'bi-direct' -- use bi-directional algorithm (more stable for b-coefficient)
-
-        inverse_type: type for inverse NFT, default = 'both'
-
-            - 'both' -- both fnft (layer peeling with Darboux) and iTIB method
-            - 'fnft' -- fnft method (layer peeling with Darboux)
-            - 'tib' -- iTIB method, combination for left and right problems
-
-        fnft_type: type of FNFT calculation, default = 0
-        nft_type: default = 'bo', type of NFT transfer matricies for slow methods and bi-directional algorithm
-        use_contour: default = False, use arbitrary spectral contour in spectral space
-        n_discrete_skip: default = 10. If we use contour, how much discrete points rest
-        print_sys_message: print additional messages during calculation, default = False
-
-    Returns:
-        Dictionary with calculated signals in defined spatial point (-z_back)
-            - 'q_total' -- signal calculated with iTIB (combined left and right)
-            - 'q_tib_left' -- signal calculated with iTIB (left)
-            - 'q_tib_right' -- signal calculated with iTIB (right)
-            - 'q_fnft' -- signal calculated with fnft
-            -  xi_d' -- discrete spectrum points
-            - 'xi' -- spectral points
-            - 'b_prop' -- b-coefficients with corresponding propagated phase
-            - 'a' -- a-coefficient
-            - 'bd_prop' -- b-coefficient with corresponding propagated phase for discrete spectrum
-            - 'ad' -- :math:`\\partial a(\\xi) / \\partial \\xi` in discrete spectrum points :math:`\\xi_n`
-
-    """
-    # be careful, z_back is the distance for backward propagation
-    # to make forward use -z_back
-
-
-    z_back = process_parameters['z_prop']
-    xi_upsampling = process_parameters['xi_upsampling']
-    forward_continuous_type = process_parameters['forward_continuous_type']
-    forward_discrete_type = process_parameters['forward_discrete_type']
-    forward_discrete_coef_type = process_parameters['forward_discrete_coef_type']
-    inverse_type = process_parameters['inverse_type']
-    fnft_type = process_parameters['fnft_type']
-    nft_type = process_parameters['nft_type']
-    use_contour = process_parameters['use_contour']
-    n_discrete_skip = process_parameters['n_discrete_skip']
-    print_sys_message = process_parameters['print_sys_message']
-
-
-    # define xi grid
-    n_t = len(t)
-    dt = t[1] - t[0]
-    t_span = t[-1] - t[0]
-    # print(t_span, dt * (n_t - 1))
-
-    n_xi = xi_upsampling * n_t
-
-    rv, xi_val = nsev_inverse_xi_wrapper(n_t, t[0], t[-1], n_xi)
-    xi = xi_val[0] + np.arange(n_xi) * (xi_val[1] - xi_val[0]) / (n_xi - 1)
-    xi_span = xi_val[1] - xi_val[0]
-
-    # if we want to use root finding procedure for polynomial, we should calculate coefficients
-    res_poly = None
-    if forward_continuous_type == 'fnftpoly' or forward_discrete_coef_type == 'fnftpoly':
-        res_poly = nsev_poly(q, t, dis=fnft_type)
-
-    # here we calculate discrete spectrum
-    res_discr = get_discrete_eigenvalues(q, t, type=forward_discrete_type, xi_upsampling=xi_upsampling,
-                                         max_discrete_points=2048, res_poly=res_poly)
-    xi_d = res_discr['discrete_spectrum']
-
-    if forward_discrete_type == 'fnft':  # norming constants and residues already calculated
-        bd = res_discr['disc_norm']
-        rd = res_discr['disc_res']
-        ad = bd / rd
-
-    if (forward_discrete_type == 'fnft' and forward_discrete_coef_type != 'fnft') or forward_discrete_type != 'fnft':
-        # we have to calculate coefficients
-        # even if we have already calculated with fnft but want use other type of calculation of coefficients
-        res_discr_coef = get_discrete_spectrum_coefficients(q, t, xi_d, type=forward_discrete_coef_type,
-                                                            type_coef='orig', fnft_type=fnft_type, res_poly=res_poly)
-        bd = res_discr_coef['bd']
-        rd = res_discr_coef['rd']
-        ad = res_discr_coef['ad']
-
-    if use_contour:  # find suitable contour for calculation of continuous spectrum
-        xi_d, bd, rd, ad, xi = get_cut_spectrum_and_contour(xi_d, bd, ad, rd, n_discrete_skip, xi_span, n_xi)
-
-    res_cont = get_continuous_spectrum(q, t, xi=xi, type=forward_continuous_type, xi_upsampling=xi_upsampling,
-                                       fnft_type=fnft_type, nft_type=nft_type,
-                                       res_poly=res_poly, coefficient_type='both')
-
-    a = res_cont['a']
-    b = res_cont['b']
-    b_right = res_cont['b_right']
-
-    if print_sys_message:
-        print('Number of discrete eigenvalues:', len(xi_d))
-
-
-    # in dimensionless units we have
-    # beta2 = -1.0
-    # gamma = 1.0
-
-    b_prop = b * np.exp(-2. * 1.0j * z_back * np.power(xi, 2))
-    b_prop_right = b_right * np.exp(2. * 1.0j * z_back * np.power(xi, 2))
-    bd_prop = bd * np.exp(-2. * 1.0j * z_back * np.power(xi_d, 2))
-    # bd_prop_left = np.conj(b_prop)
-
-    q_tib_total = []
-    q_left_part = []
-    q_right_part = []
-    # restore right q part with itib
-    if inverse_type == 'tib' or inverse_type == 'both':
-
-        q_right_part = make_itib_from_scattering(b_prop / a, xi, bd_prop / ad, xi_d, t, print_sys_message)
-        # restore left q part with itib
-        q_left_part = make_itib_from_scattering(b_prop_right / a, xi, 1.0 / bd_prop / ad, xi_d, t, print_sys_message)
-        # combine left and right parts
-        q_tib_total = np.concatenate((q_left_part[:len(t) // 2], np.conj(q_right_part[:len(t) // 2][::-1])))
-
-    q_fnft = []
-    # additionally we restore signal with inverse fnft
-    if inverse_type == 'fnft' or inverse_type == 'both':
-        res = nsev_inverse(xi, t, b_prop, xi_d, bd_prop / ad, cst=1, dst=0, dis=fnft_type)
-        q_fnft = res['q']
-
-    # if it will be required, one could return any other parameters
-    return {'q_total': q_tib_total,
-            'q_tib_left': q_left_part,
-            'q_tib_right': np.conj(q_right_part[::-1]),
-            'q_fnft': q_fnft,
-            'xi_d': xi_d,
-            'xi': xi,
-            'b_prop': b_prop,
-            'a': a,
-            'bd_prop': bd_prop,
+            'bd_right_prop': bd_right_prop,
             'ad': ad}
 
 
@@ -1657,8 +1840,8 @@ def make_dnft(q, t, xi_upsampling=1, fnft_type=0, print_sys_message=False):
 
     if res['return_value'] != 0:
         print('[make_dbp_nft] Error: fnft failed!')
-        q_total = np.zeros((len(q)), dtype=complex)
-        q_fnft = np.zeros((len(q)), dtype=complex)
+        q_total = np.zeros((len(q)), dtype=np.complex128)
+        q_fnft = np.zeros((len(q)), dtype=np.complex128)
 
         return {'q_total': q_total,
                 'q_fnft': q_fnft,
@@ -1687,7 +1870,7 @@ def make_dnft(q, t, xi_upsampling=1, fnft_type=0, print_sys_message=False):
     return result
 
 
-def get_continuous_spectrum(q, t, xi=None, type='fnft', xi_upsampling=1, fnft_type=0, nft_type='bo',
+def get_continuous_spectrum(t, *q, xi=None, type='fnft', xi_upsampling=1, fnft_type=0, nft_type='bo',
                             res_poly=None, coefficient_type='left'):
     """
 
@@ -1716,40 +1899,57 @@ def get_continuous_spectrum(q, t, xi=None, type='fnft', xi_upsampling=1, fnft_ty
 
     if xi is None:
         n_xi = xi_upsampling * n_t
-        rv, xi_val = nsev_inverse_xi_wrapper(n_t, t[0], t[-1], n_xi)
-        xi = xi_val[0] + np.arange(n_xi) * (xi_val[1] - xi_val[0]) / (n_xi - 1)
+
+        # rv, xi_val = nsev_inverse_xi_wrapper(n_t, t[0], t[-1], n_xi)
+        # xi = xi_val[0] + np.arange(n_xi) * (xi_val[1] - xi_val[0]) / (n_xi - 1)
+
+        xi_span = np.pi / dt
+        d_xi = xi_span / n_xi
+        xi = np.array([(i + 1) * d_xi - xi_span / 2. for i in range(n_xi)])
 
     n_xi = len(xi)
 
     # define zero arrays
-    a = np.zeros(n_xi, dtype=complex)
-    b = np.zeros(n_xi, dtype=complex)
-    r = np.zeros(n_xi, dtype=complex)
-    b_right = np.zeros(n_xi, dtype=complex)
-    r_right = np.zeros(n_xi, dtype=complex)
+    a = np.zeros(n_xi, dtype=np.complex128)
+    b = np.zeros(n_xi, dtype=np.complex128)
+    r = np.zeros(n_xi, dtype=np.complex128)
+    b_right = np.zeros(n_xi, dtype=np.complex128)
+    r_right = np.zeros(n_xi, dtype=np.complex128)
 
     if type == 'fnft':
         # make direct nft
         # this calculate only continuous spectrum on real xi axe
         # to calculate continuous spectrum on an arbitrary contour use 'fnftpoly'
-        res = nsev(q, t, xi[0], xi[-1], n_xi, dst=3, cst=2,
-                   dis=fnft_type)  # dst=3 -- skip discrete spectrum calculation
+
+        if len(q) == 1:
+            res = nsev(q[0], t, xi[0], xi[-1], n_xi, dst=3, cst=1,
+                       dis=fnft_type)  # dst=3 -- skip discrete spectrum calculation
+        elif len(q) == 2:
+            res = manakovv(q[0], q[1], t, xi[0], xi[-1], M=n_xi, K=2048, cst=1)
+        else:
+            print("This number of equation is not supported yet:", len(q))
 
         if res['return_value'] != 0:
             print('[get_continuous_spectrum] Error: fnft failed!')
 
         else:
 
-            r = res['cont_ref']
             a = res['cont_a']
-            b = res['cont_b']
+
+            if len(q) == 1:
+                b = np.array([res['cont_b']])
+            elif len(q) == 2:
+                b = np.array([res['cont_b1'], res['cont_b2']])
+
             b_right = np.conj(b)
+
+            r = b / a
             r_right = b_right / a
 
     elif type == 'fnftpoly':
 
         if res_poly is None:
-            res_poly = nsev_poly(q, t, dis=fnft_type)
+            res_poly = nsev_poly(q[0], t, dis=fnft_type)
         a_coef = res_poly['coef_a']
         b_coef = res_poly['coef_b']
         ampl_scale = res_poly['ampl_scale']
@@ -1781,7 +1981,7 @@ def get_continuous_spectrum(q, t, xi=None, type='fnft', xi_upsampling=1, fnft_ty
 
     elif type == 'slow':
 
-        a, b = get_scattering_array(q, t, xi, type=nft_type)
+        a, b = get_scattering_array(q[0], t, xi, type=nft_type)
         r = b / a
 
     else:
@@ -1790,7 +1990,7 @@ def get_continuous_spectrum(q, t, xi=None, type='fnft', xi_upsampling=1, fnft_ty
     return {'a': a, 'b': b, 'r': r, 'b_right': b_right, 'r_right': r_right}
 
 
-def get_discrete_eigenvalues(q, t, type='fnft', xi_upsampling=1, max_discrete_points=1024, a_cont=None, res_poly=None):
+def get_discrete_eigenvalues(t, *q, type='fnft', xi_upsampling=1, max_discrete_points=1024, a_cont=None, res_poly=None):
     """
     Calculates discrete spectrum points.
 
@@ -1832,20 +2032,42 @@ def get_discrete_eigenvalues(q, t, type='fnft', xi_upsampling=1, max_discrete_po
         # make direct nft
         # res = nsev(q, t, xi[0], xi[-1], n_xi, dst=2, cst=2, dis=19)
         fnft_type = 0  # MODAL -- AL scheme from FNFT
-        res = nsev(q, t, xi[0], xi[-1], n_xi, dst=2, cst=3, dis=fnft_type, niter=50, K=max_discrete_points)
+
+        if len(q) == 1:
+            res = nsev(q[0], t, xi[0], xi[-1], n_xi, dst=2, cst=3, dis=fnft_type, niter=50, K=max_discrete_points)
+        elif len(q) == 2:
+            res = manakovv(q[0], q[1], t, xi[0], xi[-1], n_xi, dst=2, cst=3, dis=fnft_type, niter=50,
+                           K=max_discrete_points)
+        else:
+            print("This number of equation is not supported yet:", len(q))
+
         discrete_spectrum = res['bound_states']
         result['return_fnft'] = res['return_value']
         result['disc_norm'] = res['disc_norm']
         result['disc_res'] = res['disc_res']
 
     elif type == 'pjt':
-        if a_cont is None:
-            a_cont = np.zeros(1, dtype=complex)
-            n_xi = 0
-        else:
-            n_xi = len(a_cont)
 
-        discrete_spectrum = np.array(pjt(n_t, q, t[0], t[-1] + (t[-1] - t[0]) / n_t, n_xi, a_cont, omp_num_threads=8))
+        if len(q) == 1:
+            res = pjt(q[0], t, a_cont)
+
+            result['disc_norm'] = np.array([res['disc_norm']])
+            result['disc_res'] = np.array([res['disc_res']])
+            result['disc_norm_right'] = np.array([np.reciprocal(res['disc_norm'])])
+            result['disc_res_right'] = result['disc_res'] * result['disc_norm_right'] * result['disc_norm_right']
+
+        elif len(q) == 2:
+            res = pjt_manakov(q[0], q[1], t, a_cont)
+
+            num_eigs = len(res['bound_states'])
+            result['disc_norm'] = np.array([res['disc_norm1'][0:num_eigs], res['disc_norm2'][0:num_eigs]])
+            result['disc_res'] = np.array([res['disc_res1'][0:num_eigs], res['disc_res2'][0:num_eigs]])
+            result['disc_norm_right'] = np.array([res['disc_norm1'][num_eigs:], res['disc_norm2'][num_eigs:]])
+            result['disc_res_right'] = np.array([res['disc_res1'][num_eigs:], res['disc_res2'][num_eigs:]])
+        else:
+            print("This number of equation is not supported yet:", len(q))
+
+        discrete_spectrum = res['bound_states']
 
     elif type == 'roots':
         # here you can write additional function which return roots of polynomial
@@ -1877,7 +2099,7 @@ def get_discrete_spectrum(q, t, type_eigen='fnft', type_coef='orig'):
         type_coef: type of scattering algorithm for bi-directional algorithm (if type='bi-direct')
 
             - 'orig' -- Ablowitz-Ladik scheme
-            - 'bo' -- Bofetta-Osborne
+            - 'bo' -- Boffetta-Osborne
             - 'tes4' -- TES4
             - 'es4' -- ES4
 
@@ -1914,7 +2136,8 @@ def get_discrete_spectrum(q, t, type_eigen='fnft', type_coef='orig'):
     return result
 
 
-def get_discrete_spectrum_coefficients(q, t, discrete_points, type='bi-direct', type_coef='orig', fnft_type=0, res_poly=None):
+def get_discrete_spectrum_coefficients(q, t, discrete_points, type='bi-direct', type_coef='orig', fnft_type=0,
+                                       res_poly=None):
     """
     Calculates spectral coefficients (::math:`r(\\xi_n)` and ::math:`b(\\xi_n)`) for given discrete spectrum points.
 
@@ -1930,7 +2153,7 @@ def get_discrete_spectrum_coefficients(q, t, discrete_points, type='bi-direct', 
         type_coef: type of scattering algorithm for bi-directional algorithm (if type='bi-direct')
 
             - 'orig' -- Ablowitz-Ladik scheme
-            - 'bo' -- Bofetta-Osborne
+            - 'bo' -- Boffetta-Osborne
             - 'tes4' -- TES4
             - 'es4' -- ES4
 
@@ -2033,7 +2256,7 @@ def durand_kerner(p, max_iter=10, tol=1e-10, check_tol=False, initial=None, shak
 
     n_roots = len(p) - 1
     if initial is None:
-        initial = np.power(0.4+0.9j, np.arange(n_roots))
+        initial = np.power(0.4 + 0.9j, np.arange(n_roots))
 
     roots = initial
 
@@ -2074,7 +2297,7 @@ def aberth_ehrlich(p, max_iter=10, tol=1e-10, check_tol=False, initial=None):
 
     n_roots = len(p) - 1
     if initial is None:
-        initial = np.power(0.4+0.9j, np.arange(n_roots))
+        initial = np.power(0.4 + 0.9j, np.arange(n_roots))
 
     dp = np.polyder(p)
 

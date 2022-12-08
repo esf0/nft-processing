@@ -1,10 +1,9 @@
 import numpy as np
 # import multiprocessing
 
-import scipy.fft
-from scipy.fft import fft, ifft, fftfreq, fftshift
-# import matplotlib.pyplot as plt
-
+from numpy.fft import fft, ifft, fftfreq, fftshift
+import matplotlib.pyplot as plt
+from numba import jit, njit
 
 # from numba import jit
 # import time
@@ -38,34 +37,44 @@ def ssfm_dispersive_step(signal, t_span, dispersion=None, w=None, delta_z=0.001,
 
     return temp_signal
 
-
+@njit
 def ssfm_nonlinear_step(signal, gamma, delta_z):
     temp_signal = signal * np.exp(1.0j * delta_z * gamma * np.power(np.absolute(signal), 2))
 
     return temp_signal
 
 
-def fiber_propogate(initial_signal, t_span, fiber_length, n_span, gamma, beta2, alpha=0, beta3=0):
+def fiber_propagate(initial_signal, t_span, fiber_length, n_span, gamma, beta2, alpha=0, beta3=0):
 
     if abs(fiber_length) < 1e-15:
         return initial_signal
 
     dz = fiber_length / n_span
+    signal_length = len(initial_signal)
+
+    w = fftshift([(i - signal_length / 2) * (2. * np.pi / t_span) for i in range(signal_length)])
+
+    dispersion = np.exp((0.5j * beta2 * w ** 2 + 1. / 6. * beta3 * w ** 3 - alpha / 2.) * dz)
+    dispersion_half_p = np.exp((0.5j * beta2 * w ** 2 + 1. / 6. * beta3 * w ** 3 - alpha / 2.) * dz * 0.5)
+    dispersion_half_m = np.exp((0.5j * beta2 * w ** 2 + 1. / 6. * beta3 * w ** 3 - alpha / 2.) * (-dz) * 0.5)
 
     # D/2
-    signal = ssfm_dispersive_step(initial_signal, t_span, delta_z=dz / 2., beta2=beta2, alpha=alpha, beta3=beta3)
+    signal = ssfm_dispersive_step(initial_signal, t_span, dispersion=dispersion_half_p, delta_z=dz / 2., beta2=beta2,
+                                  alpha=alpha, beta3=beta3)
 
     for n in range(n_span):
         signal = ssfm_nonlinear_step(signal, gamma, dz)
-        signal = ssfm_dispersive_step(signal, t_span, delta_z=dz, beta2=beta2, alpha=alpha, beta3=beta3)
+        signal = ssfm_dispersive_step(signal, t_span, dispersion=dispersion, delta_z=dz, beta2=beta2, alpha=alpha,
+                                      beta3=beta3)
 
     # -D/2
-    signal = ssfm_dispersive_step(signal, t_span, delta_z=-dz / 2., beta2=beta2, alpha=alpha, beta3=beta3)
+    signal = ssfm_dispersive_step(signal, t_span, dispersion=dispersion_half_m, delta_z=-dz / 2., beta2=beta2,
+                                  alpha=alpha, beta3=beta3)
 
     return signal
 
 
-def fiber_propogate_high_order(initial_signal, t_span, fiber_length, n_span, gamma, beta2, alpha=0, beta3=0):
+def fiber_propagate_high_order(initial_signal, t_span, fiber_length, n_span, gamma, beta2, alpha=0, beta3=0):
     # TODO: check dz and n_span for calculation
 
     dz = fiber_length / (6 * n_span)
