@@ -167,7 +167,7 @@ def get_windowed_signal(signal, signal_parameters, process_parameters, channel=N
     if process_parameters['window_mode'] == 'cdc':
 
         if channel is None:
-            print('for cdc window mode you have to provide channel parameters')
+            print('[get_windowed_signal] Error: for cdc window mode you have to provide channel parameters')
             return -2
 
         dt = 1. / signal_parameters['sample_freq']
@@ -195,7 +195,7 @@ def get_windowed_signal(signal, signal_parameters, process_parameters, channel=N
             channel['z_span'] = -channel['z_span']  # return to original state
 
         else:
-            print('for cdc window mode you have to provide channel parameters')
+            print('[get_windowed_signal] Error: unsupported number of polarisations')
             return -3
 
         if signal_parameters['n_polarisations'] == 2:
@@ -237,7 +237,7 @@ def get_windowed_signal(signal, signal_parameters, process_parameters, channel=N
     return signal_cut, t_cut
 
 
-def process_nft_window(signal, signal_parameters, process_parameters):
+def process_nft_window(signal, signal_parameters, process_parameters, channel=None):
     # preprocess signal for different window modes
     # e.g. 'plain' window mode do nothing with the signal
     # or 'cdc' compensates dispersion, rests only processing part of the signal and returns dispersion
@@ -260,21 +260,41 @@ def process_nft_window(signal, signal_parameters, process_parameters):
         signal_for_nft, t_for_nft = add_zeros_to_signal(signal_cut, t_cut, n_add=-1)
         n_add = (len(signal_for_nft) - np_proccesing) / 2  # number of points which was added to the signal
 
-    if signal_parameters['n_polarisations'] == 1:
-        result_dbp_nft = nft.make_dbp_nft(signal_for_nft, t_for_nft - (t_for_nft[-1] + t_for_nft[0]) / 2,
-                                          process_parameters)
-    elif signal_parameters['n_polarisations'] == 2:
-        result_dbp_nft = {}
-        ...
-    else:
-        print('[process_nft_window] Error: unknown number of polarisations.')
+    if process_parameters['window_mode'] == 'test':
+        dt = 1. / signal_parameters['sample_freq']
+        if channel is None:
+            print('[process_nft_window] Error: for test case you have to give channel parameters')
+            return -2
 
-    if process_parameters['inverse_type'] == 'both' or process_parameters['inverse_type'] == 'tib':
-        signal_restored = result_dbp_nft['q_total']
-    elif process_parameters['inverse_type'] == 'fnft':
-        signal_restored = result_dbp_nft['q_fnft']
+        if signal_parameters['n_polarisations'] == 2:
+            signal_restored = dispersion_compensation_manakov(channel, signal_for_nft[0], signal_for_nft[1], dt)
+
+        elif signal_parameters['n_polarisations'] == 1:
+            signal_restored = dispersion_compensation(channel, signal_for_nft, dt)
+
+        else:
+            print('[process_nft_window] Error: unsupported number of polarisations')
+            return -3
+
     else:
-        print("[process_nft_window]: wrong inverse_type")
+
+        if signal_parameters['n_polarisations'] == 1:
+            result_dbp_nft = nft.make_dbp_nft(t_for_nft - (t_for_nft[-1] + t_for_nft[0]) / 2,
+                                              process_parameters,
+                                              signal_for_nft)
+        elif signal_parameters['n_polarisations'] == 2:
+            result_dbp_nft = nft.make_dbp_nft(t_for_nft - (t_for_nft[-1] + t_for_nft[0]) / 2,
+                                              process_parameters,
+                                              signal_for_nft[0], signal_for_nft[1])
+        else:
+            print('[process_nft_window] Error: unknown number of polarisations.')
+
+        if process_parameters['inverse_type'] == 'both' or process_parameters['inverse_type'] == 'tib':
+            signal_restored = result_dbp_nft['q_total']
+        elif process_parameters['inverse_type'] == 'fnft':
+            signal_restored = result_dbp_nft['q_fnft']
+        else:
+            print("[process_nft_window]: wrong inverse_type")
 
     signal_restored = signal_restored[n_add:-n_add]  # remove additional zeros on the sides
 
@@ -331,9 +351,10 @@ def process_wdm_signal(signal, signal_init, channel, wdm_parameters, wdm_info, p
         # the fastest solution is to add zeros to the end of the resulting signal and find points then cut
         signal_nft = result_nft['signal_restored']
 
-        start_point = process_parameters['n_symb_skip'] + process_parameters['n_symb_side']
-        end_point = process_parameters['n_symb_skip'] + process_parameters['n_symb_side'] + \
-                    process_parameters['n_symb_proc']
+        start_point = process_parameters['n_symb_side']
+        end_point = process_parameters['n_symb_side'] + process_parameters['n_symb_proc']
+        if process_parameters['window_mode'] == 'cdc':
+            start_point -= process_parameters['n_symb_add']  # additional shift for CDC window mode. See explanation
 
         if wdm_parameters['n_polarisations'] == 1:
             # NLSE case
