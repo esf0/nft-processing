@@ -1,6 +1,8 @@
 import numpy as np
 # from hpcom.signal import receiver_wdm, receiver, get_points_wdm
-from hpcom.signal import receiver_wdm, receiver, nonlinear_shift, get_points_wdm
+import sys
+#sys.path.insert(0, '../../hpcom/hpcom')
+#from hpcom.signal import receiver_wdm, receiver, nonlinear_shift, get_points_wdm
 from ssfm_gpu.ssfm_gpu import dispersion_compensation_manakov, dispersion_compensation
 import nft_handling.nft_analyse as nft
 

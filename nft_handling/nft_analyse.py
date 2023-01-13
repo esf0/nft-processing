@@ -1,9 +1,10 @@
 from importlib import reload
-import FNFTpy
+import FNFTpy, FNFTpy_extended
 
 reload(FNFTpy)
-from FNFTpy import nsev, nsev_poly
-from FNFTpy import nsev_inverse, nsev_inverse_xi_wrapper, manakovv
+reload(FNFTpy)
+#from FNFTpy import nsev, nsev_poly
+from FNFTpy_extended import  nsev, nsev_poly, nsev_inverse, nsev_inverse_xi_wrapper, manakovv, manakovv_poly
 import numpy as np
 import scipy as sp
 from scipy.integrate import simps, trapz
@@ -16,13 +17,13 @@ import timeit
 import time
 from tqdm import tqdm
 from scipy.fftpack import fft, ifft, fftfreq, fftshift, ifftshift
-from signal_handling.ssfm import fiber_propogate, get_soliton_pulse, get_gauss_pulse, get_energy
+from signal_handling.ssfm import fiber_propagate, get_soliton_pulse, get_gauss_pulse, get_energy
 import matplotlib.pyplot as plt
 import matplotlib
 
 import signal_handling.signal_generation as sg
 import nft_handling.test_signals as test_signals
-from pjt import pjt
+from PJTpy import pjt, pjt_manakov
 
 import warnings
 from datetime import datetime
@@ -1215,6 +1216,7 @@ def get_omega_continuous(r, xi, t, direction='left', use_fft=True):
 
     """
     d_xi = xi[1] - xi[0]
+    d_t = t[1] - t[0]
     n_t = len(t)
     n_eq = len(r)
 
@@ -1627,7 +1629,7 @@ def make_dbp_fnft(t, z_back, xi_upsampling=1, inverse_type='both', fnft_type=11,
     # other idea is to play with coef_t, it can numerically give some gain, but I did not try it yet
 
 
-def make_dbp_nft_old(t, z_back, *q, xi_upsampling=1,
+def make_dbp_nft(t, z_back, *q, xi_upsampling=1,
                      forward_continuous_type='fnft',
                      forward_discrete_type='fnft',
                      forward_discrete_coef_type='fnftpoly',
@@ -1711,7 +1713,10 @@ def make_dbp_nft_old(t, z_back, *q, xi_upsampling=1,
     # if we want to use root finding procedure for polynomial, we should calculate coefficients
     res_poly = None
     if forward_continuous_type == 'fnftpoly' or forward_discrete_coef_type == 'fnftpoly':
-        res_poly = nsev_poly(q[0], t, dis=fnft_type)
+        if len(q) == 1:
+            res_poly = nsev_poly(q[0], t, dis=fnft_type)
+        else:
+            res_poly = manakovv_poly(q[0], q[1], t, dis=fnft_type)
 
     # here we calculate discrete spectrum
     start_time = datetime.now()
@@ -1769,7 +1774,7 @@ def make_dbp_nft_old(t, z_back, *q, xi_upsampling=1,
     # gamma = 1.0
 
     b_prop = b * np.exp(-2. * 1.0j * z_back * np.power(xi, 2))
-    b_prop_right = b_right * np.exp(2. * 1.0j * z_back * np.power(xi, 2))
+    b_right_prop = b_right * np.exp(2. * 1.0j * z_back * np.power(xi, 2))
     bd_prop = bd * np.exp(-2. * 1.0j * z_back * np.power(xi_d, 2))
     bd_right_prop = bd_right * np.exp(2. * 1.0j * z_back * np.power(xi_d, 2))
     # bd_prop_left = np.conj(b_prop)
@@ -1785,7 +1790,7 @@ def make_dbp_nft_old(t, z_back, *q, xi_upsampling=1,
         split_index = int(n_t / 2)
 
         # restore left q part with itib
-        q_left_part = make_itib_from_scattering(b_prop_right / a, xi, bd_right_prop / ad, xi_d, t,
+        q_left_part = make_itib_from_scattering(b_right_prop / a, xi, bd_right_prop / ad, xi_d, t,
                                                 split_index, 'left', print_sys_message)
         # restore right q part with itib
         q_right_part = np.conj(np.flip(make_itib_from_scattering(b_prop / a, xi, bd_prop / ad, xi_d, t[::-1] * -1,
@@ -1816,6 +1821,7 @@ def make_dbp_nft_old(t, z_back, *q, xi_upsampling=1,
             'xi_d': xi_d,
             'xi': xi,
             'b_prop': b_prop,
+            'b_right_prop': b_right_prop,
             'a': a,
             'bd_prop': bd_prop,
             'bd_right_prop': bd_right_prop,
@@ -1925,7 +1931,7 @@ def get_continuous_spectrum(t, *q, xi=None, type='fnft', xi_upsampling=1, fnft_t
             res = nsev(q[0], t, xi[0], xi[-1], n_xi, dst=3, cst=1,
                        dis=fnft_type)  # dst=3 -- skip discrete spectrum calculation
         elif len(q) == 2:
-            res = manakovv(q[0], q[1], t, xi[0], xi[-1], M=n_xi, K=2048, cst=1)
+            res = manakovv(q[0], q[1], t, xi[0], xi[-1], M=n_xi, K=2048, cst=1, dis=fnft_type)
         else:
             print("This number of equation is not supported yet:", len(q))
 
@@ -1948,36 +1954,78 @@ def get_continuous_spectrum(t, *q, xi=None, type='fnft', xi_upsampling=1, fnft_t
 
     elif type == 'fnftpoly':
 
-        if res_poly is None:
-            res_poly = nsev_poly(q[0], t, dis=fnft_type)
-        a_coef = res_poly['coef_a']
-        b_coef = res_poly['coef_b']
-        ampl_scale = res_poly['ampl_scale']
-        deg = res_poly['deg']
-        deg1step = res_poly['deg1step']
-        deg1step_denom = res_poly['deg1step_denom']
-        phase_a = res_poly['phase_a']  # has to be 0
-        phase_b = res_poly['phase_b']
+        if len(q) == 1:
+            if res_poly is None:
+                res_poly = nsev_poly(q[0], t, dis=fnft_type)
+            a_coef = res_poly['coef_a']
+            b_coef = res_poly['coef_b']
+            ampl_scale = res_poly['ampl_scale']
+            deg = res_poly['deg']
+            deg1step = res_poly['deg1step']
+            deg1step_denom = res_poly['deg1step_denom']
+            phase_a = res_poly['phase_a']  # has to be 0
+            phase_b = res_poly['phase_b']
 
-        # transform for spectral parameter z = e ^ (1j * xi * dt)
-        z = np.exp(2j * xi / (deg1step - 2 * deg1step_denom) * dt)
+            # transform for spectral parameter z = e ^ (1j * xi * dt)
+            z = np.exp(2j * xi / (deg1step - 2 * deg1step_denom) * dt)
 
-        a = np.polyval(ampl_scale * a_coef, z) * np.exp(1j * xi * phase_a)
+            a = np.polyval(ampl_scale * a_coef, z) * np.exp(1j * xi * phase_a)
 
-        if coefficient_type == 'left' or coefficient_type == 'both':
-            b = np.polyval(ampl_scale * b_coef, z) * np.exp(1j * xi * phase_b)
-            if fnft_type == 49 or fnft_type == 50:  # for Suzuki schemes we have additional multiplication
-                a = a * z ** (-2 * n_t)
-                b = b * z ** (-2 * n_t)
-            r = b / a
+            if coefficient_type == 'left' or coefficient_type == 'both':
+                b = np.array([np.polyval(ampl_scale * b_coef, z) * np.exp(1j * xi * phase_b)])
+                if fnft_type == 49 or fnft_type == 50:  # for Suzuki schemes we have additional multiplication
+                    a = a * z ** (-2 * n_t)
+                    b = b * z ** (-2 * n_t)
+                r = b / a
 
-        # TODO: check sign for right part in phase and suzuki scheme
-        if coefficient_type == 'right' or coefficient_type == 'both':
-            b_right = np.polyval(ampl_scale * np.conj(b_coef[::-1]), z) * np.exp(-1j * xi * phase_b)
-            if fnft_type == 49 or fnft_type == 50:  # for Suzuki schemes we have additional multiplication
-                a = a * z ** (-2 * n_t)
-                b_right = b_right * z ** (2 * n_t)
-            r_right = b_right / a
+            # TODO: check sign for right part in phase and suzuki scheme
+            if coefficient_type == 'right' or coefficient_type == 'both':
+                # b_right = np.array([np.polyval(ampl_scale * np.conj(b_coef[::-1]), z) * np.exp(-1j * xi * phase_b)])
+                # if fnft_type == 49 or fnft_type == 50:  # for Suzuki schemes we have additional multiplication
+                #     a = a * z ** (-2 * n_t)
+                #     b_right = b_right * z ** (2 * n_t)
+                b_right = np.conj(b)
+                r_right = b_right / a
+
+        elif len(q) == 2:
+            if res_poly is None:
+                res_poly = manakovv_poly(q[0], q[1], t, dis=fnft_type)
+            a_coef = res_poly['coef_a']
+            b1_coef = res_poly['coef_b1']
+            b2_coef = res_poly['coef_b2']
+            ampl_scale = res_poly['ampl_scale']
+            deg = res_poly['deg']
+            deg1step = res_poly['deg1step']
+            # deg1step_denom = res_poly['deg1step_denom']
+            phase_a = res_poly['phase_a']  # has to be 0
+            phase_b = res_poly['phase_b']
+
+            # transform for spectral parameter z = e ^ (1j * xi * dt)
+            z = np.exp(2j * xi / deg1step * dt)
+
+            a = np.polyval(ampl_scale * a_coef, z) * np.exp(1j * xi * phase_a)
+
+            if coefficient_type == 'left' or coefficient_type == 'both':
+                b = np.array([
+                    np.polyval(ampl_scale * b1_coef, z) * np.exp(1j * xi * phase_b),
+                    np.polyval(ampl_scale * b2_coef, z) * np.exp(1j * xi * phase_b)
+                    ])
+                if fnft_type == 10:  # for Suzuki scheme we have additional multiplication
+                    a = a * z ** (-2 * n_t)
+                    b = b * z ** (-2 * n_t)
+                r = b / a
+
+            # TODO: check sign for right part in phase and suzuki scheme
+            if coefficient_type == 'right' or coefficient_type == 'both':
+                # b_right = np.array([
+                #     np.polyval(ampl_scale * np.conj(b1_coef[::-1]), z) * np.exp(-1j * xi * phase_b),
+                #     np.polyval(ampl_scale * np.conj(b2_coef[::-1]), z) * np.exp(-1j * xi * phase_b)
+                #     ])
+                # if fnft_type == 10:  # for Suzuki schemes we have additional multiplication
+                #     a = a * z ** (-2 * n_t)
+                #     b_right = b_right * z ** (2 * n_t)
+                b_right = np.conj(b)
+                r_right = b_right / a
 
     elif type == 'slow':
 
@@ -2031,11 +2079,12 @@ def get_discrete_eigenvalues(t, *q, type='fnft', xi_upsampling=1, max_discrete_p
 
         # make direct nft
         # res = nsev(q, t, xi[0], xi[-1], n_xi, dst=2, cst=2, dis=19)
-        fnft_type = 0  # MODAL -- AL scheme from FNFT
 
         if len(q) == 1:
+            fnft_type = 0  # MODAL -- AL scheme from FNFT
             res = nsev(q[0], t, xi[0], xi[-1], n_xi, dst=2, cst=3, dis=fnft_type, niter=50, K=max_discrete_points)
         elif len(q) == 2:
+            fnft_type = 13  # MODAL -- AL scheme from FNFT
             res = manakovv(q[0], q[1], t, xi[0], xi[-1], n_xi, dst=2, cst=3, dis=fnft_type, niter=50,
                            K=max_discrete_points)
         else:
