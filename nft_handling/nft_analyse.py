@@ -1,9 +1,10 @@
 from importlib import reload
-import FNFTpy
+import FNFTpy, FNFTpy_extended
 
 reload(FNFTpy)
-from FNFTpy import nsev, nsev_poly
-from FNFTpy import nsev_inverse, nsev_inverse_xi_wrapper, manakovv
+reload(FNFTpy)
+#from FNFTpy import nsev, nsev_poly
+from FNFTpy_extended import  nsev, nsev_poly, nsev_inverse, nsev_inverse_xi_wrapper, manakovv, manakovv_poly
 import numpy as np
 import scipy as sp
 from scipy.integrate import simps, trapz
@@ -22,7 +23,7 @@ import matplotlib
 
 import signal_handling.signal_generation as sg
 import nft_handling.test_signals as test_signals
-# from pjt_old import pjt
+from PJTpy import pjt, pjt_manakov
 
 import warnings
 from datetime import datetime
@@ -1215,6 +1216,7 @@ def get_omega_continuous(r, xi, t, direction='left', use_fft=True):
 
     """
     d_xi = xi[1] - xi[0]
+    d_t = t[1] - t[0]
     n_t = len(t)
     n_eq = len(r)
     d_t = t[1] - t[0]
@@ -1628,207 +1630,7 @@ def make_dbp_fnft(t, z_back, xi_upsampling=1, inverse_type='both', fnft_type=11,
     # other idea is to play with coef_t, it can numerically give some gain, but I did not try it yet
 
 
-def make_dbp_nft(t, process_parameters, *q):
-    """
-    Perform NFT backpropagation.
-
-    Args:
-        q: signal at spatial point z
-        t: time grid for signal
-        z_back: backward propagation distance z in dimensionless units
-        xi_upsampling: upsampling parameter for continuous nonlinear spectrum. len(xi) = xi_upsampling * len(q)
-        forward_continuous_type: type of calculation of continuous spectrum for forward NFT
-
-            - 'fnft' -- use FNFT to calculate continuous spectrum (real axe only!)
-            - 'fnftpoly' -- use polynomials from FNFT to calculate continuous spectrum (arbitrary contour)
-            - 'slow' -- use transfer matrices to calculate continuous spectrum (arbitrary contour)
-
-        forward_discrete_type:
-
-            - 'fnft' -- use FNFT to calculate discrete spectrum points (coefficients calculated automatically)
-            - 'pjt' -- use PJT (phase jump tracking)
-            - 'roots' -- not implemented (other procedures to find polynomial roots -> discrete spectrum points)
-
-        forward_discrete_coef_type:
-
-            - 'fnftpoly' -- use polynomial from FNFT to calculate spectral coefficients (b-coefficient is not stable for
-             eigenvalues with large imaginary part)
-            - 'bi-direct' -- use bi-directional algorithm (more stable for b-coefficient)
-
-        inverse_type: type for inverse NFT, default = 'both'
-
-            - 'both' -- both fnft (layer peeling with Darboux) and iTIB method
-            - 'fnft' -- fnft method (layer peeling with Darboux)
-            - 'tib' -- iTIB method, combination for left and right problems
-
-        fnft_type: type of FNFT calculation, default = 0
-        nft_type: default = 'bo', type of NFT transfer matricies for slow methods and bi-directional algorithm
-        use_contour: default = False, use arbitrary spectral contour in spectral space
-        n_discrete_skip: default = 10. If we use contour, how much discrete points rest
-        print_sys_message: print additional messages during calculation, default = False
-
-    Returns:
-        Dictionary with calculated signals in defined spatial point (-z_back)
-            - 'q_total' -- signal calculated with iTIB (combined left and right)
-            - 'q_tib_left' -- signal calculated with iTIB (left)
-            - 'q_tib_right' -- signal calculated with iTIB (right)
-            - 'q_fnft' -- signal calculated with fnft
-            -  xi_d' -- discrete spectrum points
-            - 'xi' -- spectral points
-            - 'b_prop' -- b-coefficients with corresponding propagated phase
-            - 'a' -- a-coefficient
-            - 'bd_prop' -- b-coefficient with corresponding propagated phase for discrete spectrum
-            - 'ad' -- :math:`\\partial a(\\xi) / \\partial \\xi` in discrete spectrum points :math:`\\xi_n`
-
-    """
-
-    # be careful, z_back is the distance for backward propagation
-    # to make forward use -z_back
-    z_back = process_parameters['z_prop']
-    xi_upsampling = process_parameters['xi_upsampling']
-    forward_continuous_type = process_parameters['forward_continuous_type']
-    forward_discrete_type = process_parameters['forward_discrete_type']
-    forward_discrete_coef_type = process_parameters['forward_discrete_coef_type']
-    inverse_type = process_parameters['inverse_type']
-    fnft_type = process_parameters['fnft_type']
-    nft_type = process_parameters['nft_type']
-    use_contour = process_parameters['use_contour']
-    n_discrete_skip = process_parameters['n_discrete_skip']
-    print_sys_message = process_parameters['print_sys_message']
-
-    # define xi grid
-    n_t = len(t)
-    dt = t[1] - t[0]
-    t_span = t[-1] - t[0]
-    # print(t_span, dt * (n_t - 1))
-
-    n_xi = xi_upsampling * n_t
-
-    # rv, xi_val = nsev_inverse_xi_wrapper(n_t, t[0], t[-1], n_xi)
-    # print(xi_val)
-    # xi = xi_val[0] + np.arange(n_xi) * (xi_val[1] - xi_val[0]) / (n_xi - 1)
-    # xi_span = xi_val[1] - xi_val[0]
-
-    xi_span = np.pi / dt
-    d_xi = xi_span / n_xi
-    xi = np.array([(i + 1) * d_xi - xi_span / 2. for i in range(n_xi)])
-    # print(xi[0], xi[-1])
-
-    # if we want to use root finding procedure for polynomial, we should calculate coefficients
-    res_poly = None
-    if forward_continuous_type == 'fnftpoly' or forward_discrete_coef_type == 'fnftpoly':
-        res_poly = nsev_poly(q[0], t, dis=fnft_type)
-
-    # here we calculate discrete spectrum
-    start_time = datetime.now()
-    res_discr = get_discrete_eigenvalues(t, *q, type=forward_discrete_type, xi_upsampling=xi_upsampling,
-                                         max_discrete_points=2048, res_poly=res_poly)
-    if print_sys_message:
-        print_calc_time((datetime.now() - start_time).microseconds * 1000, 'discrete spectrum')
-
-    xi_d = res_discr['discrete_spectrum']
-
-    if forward_discrete_type == 'fnft' or forward_discrete_type == 'pjt':  # norming constants and residues already calculated
-        bd = res_discr['disc_norm']
-        rd = res_discr['disc_res']
-        bd_right = res_discr['disc_norm_right']
-        rd_right = res_discr['disc_res_right']
-
-        ad = []
-        if len(bd) > 0:
-            ad = np.zeros(len(rd[0]), dtype=np.complex128)
-            for i in range(len(rd[0])):
-                if np.abs(rd[0][i]) > 1e-15:
-                    ad[i] = bd[0][i] / rd[0][i]
-                else:
-                    ad[i] = bd[1][i] / rd[1][i]
-
-    if (forward_discrete_type == 'fnft' and forward_discrete_coef_type != 'fnft') \
-            or (forward_discrete_type != 'fnft' and forward_discrete_type != 'pjt'):
-        # we have to calculate coefficients
-        # even if we have already calculated with fnft but want use other type of calculation of coefficients
-        res_discr_coef = get_discrete_spectrum_coefficients(q[0], t, xi_d, type=forward_discrete_coef_type,
-                                                            type_coef='orig', fnft_type=fnft_type, res_poly=res_poly)
-        bd = res_discr_coef['bd']
-        rd = res_discr_coef['rd']
-        ad = res_discr_coef['ad']
-
-    if use_contour:  # find suitable contour for calculation of continuous spectrum
-        xi_d, bd, rd, ad, xi = get_cut_spectrum_and_contour(xi_d, bd, ad, rd, n_discrete_skip, xi_span, n_xi)
-
-    start_time = datetime.now()
-    res_cont = get_continuous_spectrum(t, *q, xi=xi, type=forward_continuous_type, xi_upsampling=xi_upsampling,
-                                       fnft_type=fnft_type, nft_type=nft_type,
-                                       res_poly=res_poly, coefficient_type='both')
-    if print_sys_message:
-        print_calc_time((datetime.now() - start_time).microseconds * 1000, 'continuous spectrum')
-
-    a = res_cont['a']
-    b = res_cont['b']
-    b_right = res_cont['b_right']
-
-    if print_sys_message:
-        print('Number of discrete eigenvalues:', len(xi_d))
-
-    # in dimensionless units we have
-    # beta2 = -1.0
-    # gamma = 1.0
-
-    b_prop = b * np.exp(-2. * 1.0j * z_back * np.power(xi, 2))
-    b_prop_right = b_right * np.exp(2. * 1.0j * z_back * np.power(xi, 2))
-    bd_prop = bd * np.exp(-2. * 1.0j * z_back * np.power(xi_d, 2))
-    bd_right_prop = bd_right * np.exp(2. * 1.0j * z_back * np.power(xi_d, 2))
-    # bd_prop_left = np.conj(b_prop)
-
-    q_tib_total = []
-    q_left_part = []
-    q_right_part = []
-
-    # restore right q part with itib
-    if inverse_type == 'tib' or inverse_type == 'both':
-        start_time = datetime.now()
-
-        split_index = int(n_t / 2)
-
-        # restore left q part with itib
-        q_left_part = make_itib_from_scattering(b_prop_right / a, xi, bd_right_prop / ad, xi_d, t,
-                                                split_index, 'left', print_sys_message)
-        # restore right q part with itib
-        q_right_part = np.conj(np.flip(make_itib_from_scattering(b_prop / a, xi, bd_prop / ad, xi_d, t[::-1] * -1,
-                                                         n_t - split_index, 'right', print_sys_message), axis=-1))
-        # combine left and right parts
-        if len(q) == 1:
-            q_tib_total = np.concatenate((q_left_part[:split_index], q_right_part[split_index:]))
-        else:
-            q_tib_total = np.concatenate((q_left_part[:, :split_index], q_right_part[:, split_index:]), axis=1)
-
-        if print_sys_message:
-            print_calc_time(start_time, 'all TIBs')
-
-    q_fnft = []
-    # additionally we restore signal with inverse fnft
-    if len(q) == 1 and (inverse_type == 'fnft' or inverse_type == 'both'):
-        start_time = datetime.now()
-        res = nsev_inverse(np.roll(xi, 0), t, np.roll(b_prop, 0), xi_d, bd_prop, cst=1, dst=0)
-        q_fnft = res['q']
-        if print_sys_message:
-            print_calc_time((datetime.now() - start_time).microseconds * 1000, 'inverse FNFT')
-
-    # if it will be required, one could return any other parameters
-    return {'q_total': q_tib_total,
-            'q_tib_left': q_left_part,
-            'q_tib_right': q_right_part,
-            'q_fnft': q_fnft,
-            'xi_d': xi_d,
-            'xi': xi,
-            'b_prop': b_prop,
-            'a': a,
-            'bd_prop': bd_prop,
-            'bd_right_prop': bd_right_prop,
-            'ad': ad}
-
-
-def make_dbp_nft_old(t, z_back, *q, xi_upsampling=1,
+def make_dbp_nft(t, z_back, *q, xi_upsampling=1,
                      forward_continuous_type='fnft',
                      forward_discrete_type='fnft',
                      forward_discrete_coef_type='fnftpoly',
@@ -1912,7 +1714,10 @@ def make_dbp_nft_old(t, z_back, *q, xi_upsampling=1,
     # if we want to use root finding procedure for polynomial, we should calculate coefficients
     res_poly = None
     if forward_continuous_type == 'fnftpoly' or forward_discrete_coef_type == 'fnftpoly':
-        res_poly = nsev_poly(q[0], t, dis=fnft_type)
+        if len(q) == 1:
+            res_poly = nsev_poly(q[0], t, dis=fnft_type)
+        else:
+            res_poly = manakovv_poly(q[0], q[1], t, dis=fnft_type)
 
     # here we calculate discrete spectrum
     start_time = datetime.now()
@@ -1970,7 +1775,7 @@ def make_dbp_nft_old(t, z_back, *q, xi_upsampling=1,
     # gamma = 1.0
 
     b_prop = b * np.exp(-2. * 1.0j * z_back * np.power(xi, 2))
-    b_prop_right = b_right * np.exp(2. * 1.0j * z_back * np.power(xi, 2))
+    b_right_prop = b_right * np.exp(2. * 1.0j * z_back * np.power(xi, 2))
     bd_prop = bd * np.exp(-2. * 1.0j * z_back * np.power(xi_d, 2))
     bd_right_prop = bd_right * np.exp(2. * 1.0j * z_back * np.power(xi_d, 2))
     # bd_prop_left = np.conj(b_prop)
@@ -1986,7 +1791,7 @@ def make_dbp_nft_old(t, z_back, *q, xi_upsampling=1,
         split_index = int(n_t / 2)
 
         # restore left q part with itib
-        q_left_part = make_itib_from_scattering(b_prop_right / a, xi, bd_right_prop / ad, xi_d, t,
+        q_left_part = make_itib_from_scattering(b_right_prop / a, xi, bd_right_prop / ad, xi_d, t,
                                                 split_index, 'left', print_sys_message)
         # restore right q part with itib
         q_right_part = np.conj(np.flip(make_itib_from_scattering(b_prop / a, xi, bd_prop / ad, xi_d, t[::-1] * -1,
@@ -2017,6 +1822,7 @@ def make_dbp_nft_old(t, z_back, *q, xi_upsampling=1,
             'xi_d': xi_d,
             'xi': xi,
             'b_prop': b_prop,
+            'b_right_prop': b_right_prop,
             'a': a,
             'bd_prop': bd_prop,
             'bd_right_prop': bd_right_prop,
@@ -2126,7 +1932,7 @@ def get_continuous_spectrum(t, *q, xi=None, type='fnft', xi_upsampling=1, fnft_t
             res = nsev(q[0], t, xi[0], xi[-1], n_xi, dst=3, cst=1,
                        dis=fnft_type)  # dst=3 -- skip discrete spectrum calculation
         elif len(q) == 2:
-            res = manakovv(q[0], q[1], t, xi[0], xi[-1], M=n_xi, K=2048, cst=1)
+            res = manakovv(q[0], q[1], t, xi[0], xi[-1], M=n_xi, K=2048, cst=1, dis=fnft_type)
         else:
             print("This number of equation is not supported yet:", len(q))
 
@@ -2149,36 +1955,78 @@ def get_continuous_spectrum(t, *q, xi=None, type='fnft', xi_upsampling=1, fnft_t
 
     elif type == 'fnftpoly':
 
-        if res_poly is None:
-            res_poly = nsev_poly(q[0], t, dis=fnft_type)
-        a_coef = res_poly['coef_a']
-        b_coef = res_poly['coef_b']
-        ampl_scale = res_poly['ampl_scale']
-        deg = res_poly['deg']
-        deg1step = res_poly['deg1step']
-        deg1step_denom = res_poly['deg1step_denom']
-        phase_a = res_poly['phase_a']  # has to be 0
-        phase_b = res_poly['phase_b']
+        if len(q) == 1:
+            if res_poly is None:
+                res_poly = nsev_poly(q[0], t, dis=fnft_type)
+            a_coef = res_poly['coef_a']
+            b_coef = res_poly['coef_b']
+            ampl_scale = res_poly['ampl_scale']
+            deg = res_poly['deg']
+            deg1step = res_poly['deg1step']
+            deg1step_denom = res_poly['deg1step_denom']
+            phase_a = res_poly['phase_a']  # has to be 0
+            phase_b = res_poly['phase_b']
 
-        # transform for spectral parameter z = e ^ (1j * xi * dt)
-        z = np.exp(2j * xi / (deg1step - 2 * deg1step_denom) * dt)
+            # transform for spectral parameter z = e ^ (1j * xi * dt)
+            z = np.exp(2j * xi / (deg1step - 2 * deg1step_denom) * dt)
 
-        a = np.polyval(ampl_scale * a_coef, z) * np.exp(1j * xi * phase_a)
+            a = np.polyval(ampl_scale * a_coef, z) * np.exp(1j * xi * phase_a)
 
-        if coefficient_type == 'left' or coefficient_type == 'both':
-            b = np.polyval(ampl_scale * b_coef, z) * np.exp(1j * xi * phase_b)
-            if fnft_type == 49 or fnft_type == 50:  # for Suzuki schemes we have additional multiplication
-                a = a * z ** (-2 * n_t)
-                b = b * z ** (-2 * n_t)
-            r = b / a
+            if coefficient_type == 'left' or coefficient_type == 'both':
+                b = np.array([np.polyval(ampl_scale * b_coef, z) * np.exp(1j * xi * phase_b)])
+                if fnft_type == 49 or fnft_type == 50:  # for Suzuki schemes we have additional multiplication
+                    a = a * z ** (-2 * n_t)
+                    b = b * z ** (-2 * n_t)
+                r = b / a
 
-        # TODO: check sign for right part in phase and suzuki scheme
-        if coefficient_type == 'right' or coefficient_type == 'both':
-            b_right = np.polyval(ampl_scale * np.conj(b_coef[::-1]), z) * np.exp(-1j * xi * phase_b)
-            if fnft_type == 49 or fnft_type == 50:  # for Suzuki schemes we have additional multiplication
-                a = a * z ** (-2 * n_t)
-                b_right = b_right * z ** (2 * n_t)
-            r_right = b_right / a
+            # TODO: check sign for right part in phase and suzuki scheme
+            if coefficient_type == 'right' or coefficient_type == 'both':
+                # b_right = np.array([np.polyval(ampl_scale * np.conj(b_coef[::-1]), z) * np.exp(-1j * xi * phase_b)])
+                # if fnft_type == 49 or fnft_type == 50:  # for Suzuki schemes we have additional multiplication
+                #     a = a * z ** (-2 * n_t)
+                #     b_right = b_right * z ** (2 * n_t)
+                b_right = np.conj(b)
+                r_right = b_right / a
+
+        elif len(q) == 2:
+            if res_poly is None:
+                res_poly = manakovv_poly(q[0], q[1], t, dis=fnft_type)
+            a_coef = res_poly['coef_a']
+            b1_coef = res_poly['coef_b1']
+            b2_coef = res_poly['coef_b2']
+            ampl_scale = res_poly['ampl_scale']
+            deg = res_poly['deg']
+            deg1step = res_poly['deg1step']
+            # deg1step_denom = res_poly['deg1step_denom']
+            phase_a = res_poly['phase_a']  # has to be 0
+            phase_b = res_poly['phase_b']
+
+            # transform for spectral parameter z = e ^ (1j * xi * dt)
+            z = np.exp(2j * xi / deg1step * dt)
+
+            a = np.polyval(ampl_scale * a_coef, z) * np.exp(1j * xi * phase_a)
+
+            if coefficient_type == 'left' or coefficient_type == 'both':
+                b = np.array([
+                    np.polyval(ampl_scale * b1_coef, z) * np.exp(1j * xi * phase_b),
+                    np.polyval(ampl_scale * b2_coef, z) * np.exp(1j * xi * phase_b)
+                    ])
+                if fnft_type == 10:  # for Suzuki scheme we have additional multiplication
+                    a = a * z ** (-2 * n_t)
+                    b = b * z ** (-2 * n_t)
+                r = b / a
+
+            # TODO: check sign for right part in phase and suzuki scheme
+            if coefficient_type == 'right' or coefficient_type == 'both':
+                # b_right = np.array([
+                #     np.polyval(ampl_scale * np.conj(b1_coef[::-1]), z) * np.exp(-1j * xi * phase_b),
+                #     np.polyval(ampl_scale * np.conj(b2_coef[::-1]), z) * np.exp(-1j * xi * phase_b)
+                #     ])
+                # if fnft_type == 10:  # for Suzuki schemes we have additional multiplication
+                #     a = a * z ** (-2 * n_t)
+                #     b_right = b_right * z ** (2 * n_t)
+                b_right = np.conj(b)
+                r_right = b_right / a
 
     elif type == 'slow':
 
@@ -2232,11 +2080,12 @@ def get_discrete_eigenvalues(t, *q, type='fnft', xi_upsampling=1, max_discrete_p
 
         # make direct nft
         # res = nsev(q, t, xi[0], xi[-1], n_xi, dst=2, cst=2, dis=19)
-        fnft_type = 0  # MODAL -- AL scheme from FNFT
 
         if len(q) == 1:
+            fnft_type = 0  # MODAL -- AL scheme from FNFT
             res = nsev(q[0], t, xi[0], xi[-1], n_xi, dst=2, cst=3, dis=fnft_type, niter=50, K=max_discrete_points)
         elif len(q) == 2:
+            fnft_type = 13  # MODAL -- AL scheme from FNFT
             res = manakovv(q[0], q[1], t, xi[0], xi[-1], n_xi, dst=2, cst=3, dis=fnft_type, niter=50,
                            K=max_discrete_points)
         else:
