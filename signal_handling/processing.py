@@ -1,7 +1,7 @@
 import numpy as np
 # from hpcom.signal import receiver_wdm, receiver, get_points_wdm
 from hpcom.signal import receiver_wdm, receiver, nonlinear_shift, get_points_wdm
-from ssfm_gpu.ssfm_gpu import dispersion_compensation_manakov, dispersion_compensation
+from ssfm_gpu.propagation import dispersion_compensation_manakov, dispersion_compensation
 import nft_handling.nft_analyse as nft
 
 
@@ -95,10 +95,8 @@ def cut_signal_window_two_polarisation(signal_x, signal_y, signal_parameters, n_
     Returns: x- and y-polarisation of signal in window
 
     """
-    return cut_signal_window(signal_x, signal_parameters, n_symb_proc, n_symb_skip), cut_signal_window(signal_y,
-                                                                                                       signal_parameters,
-                                                                                                       n_symb_proc,
-                                                                                                       n_symb_skip)
+    return (cut_signal_window(signal_x, signal_parameters, n_symb_proc, n_symb_skip),
+            cut_signal_window(signal_y, signal_parameters, n_symb_proc, n_symb_skip))
 
 
 def get_default_process_parameters():
@@ -153,8 +151,7 @@ def get_process_parameters(z_prop, n_symb_proc, n_symb_side, n_symb_skip,
     process['fnft_type'] = fnft_type
     process['nft_type'] = nft_type
     process['use_contour'] = use_contour
-    process[
-        'n_discrete_skip'] = n_discrete_skip  # number of discrete points in spectrum beyond the contour if use_contour=True
+    process['n_discrete_skip'] = n_discrete_skip  # number of discrete points in spectrum beyond the contour if use_contour=True
     process['print_sys_message'] = print_sys_message
     process['n_steps'] = n_steps  # number of processing steps
 
@@ -203,10 +200,13 @@ def get_windowed_signal(signal, signal_parameters, process_parameters, channel=N
         else:
             signal_proc = signal_proc.numpy()
 
-    elif process_parameters['window_mode'] == 'plain':
+    elif process_parameters['window_mode'] == 'plain' or process_parameters['window_mode'] == 'test':
 
         # do nothing with the signal on the Rx
-        ...
+        if signal_parameters['n_polarisations'] == 2:
+            signal_proc = (signal_proc[0].numpy(), signal_proc[1].numpy())
+        else:
+            signal_proc = signal_proc.numpy()
 
     else:
         print('window mode ' + process_parameters['window_mode'] + ' is not defined')
@@ -254,11 +254,11 @@ def process_nft_window(signal, signal_parameters, process_parameters, channel=No
         signal_for_nft_x, t_for_nft = add_zeros_to_signal(signal_cut[0], t_cut, n_add=-1)
         signal_for_nft_y, t_for_nft = add_zeros_to_signal(signal_cut[1], t_cut, n_add=-1)
         signal_for_nft = (signal_for_nft_x, signal_for_nft_y)
-        n_add = (len(signal_for_nft_x) - np_proccesing) / 2  # number of points which was added to the signal
+        n_add = (len(signal_for_nft_x) - np_proccesing) // 2  # number of points which was added to the signal
     else:
         np_proccesing = len(signal_cut)
         signal_for_nft, t_for_nft = add_zeros_to_signal(signal_cut, t_cut, n_add=-1)
-        n_add = (len(signal_for_nft) - np_proccesing) / 2  # number of points which was added to the signal
+        n_add = (len(signal_for_nft) - np_proccesing) // 2  # number of points which was added to the signal
 
     if process_parameters['window_mode'] == 'test':
         dt = 1. / signal_parameters['sample_freq']
@@ -296,7 +296,13 @@ def process_nft_window(signal, signal_parameters, process_parameters, channel=No
         else:
             print("[process_nft_window]: wrong inverse_type")
 
-    signal_restored = signal_restored[n_add:-n_add]  # remove additional zeros on the sides
+    print(np.shape(signal_restored), n_add)
+    if n_add != 0:
+        if signal_parameters['n_polarisations'] == 1:
+            signal_restored = signal_restored[n_add:-n_add]  # remove additional zeros on the sides
+        elif signal_parameters['n_polarisations'] == 2:
+            signal_restored = (signal_restored[0][n_add:-n_add], signal_restored[1][n_add:-n_add])
+    print(np.shape(signal_restored))
 
     result = {}
     # result['n_add'] = n_add
@@ -313,8 +319,8 @@ def process_nft_window(signal, signal_parameters, process_parameters, channel=No
 def process_wdm_signal(signal, signal_init, channel, wdm_parameters, wdm_info, process_parameters):
 
     # in case of one polarisation points_y_orig will be empty
-    points_x_orig = wdm_info['points_x']
-    points_y_orig = wdm_info['points_y']
+    points_x_orig = wdm_info['points_x'][0]  # [0] index for only one WDM channel
+    points_y_orig = wdm_info['points_y'][0]  # [0] index for only one WDM channel
     ft_filter_values = wdm_info['ft_filter_values_x']
 
     points_x_nft = np.array([])
@@ -332,8 +338,8 @@ def process_wdm_signal(signal, signal_init, channel, wdm_parameters, wdm_info, p
     elif wdm_parameters['n_polarisations'] == 2:
         # Manakov case
         signal_cdc = dispersion_compensation_manakov(channel, signal[0], signal[1], 1. / wdm_parameters['sample_freq'])
-        points_x_cdc = get_points_wdm(receiver_wdm(signal_cdc[0], ft_filter_values, wdm_parameters), wdm_parameters)
-        points_y_cdc = get_points_wdm(receiver_wdm(signal_cdc[1], ft_filter_values, wdm_parameters), wdm_parameters)
+        points_x_cdc = get_points_wdm(receiver_wdm(signal_cdc[0], ft_filter_values, wdm_parameters)[0], wdm_parameters)  # [0] index for only one WDM channel
+        points_y_cdc = get_points_wdm(receiver_wdm(signal_cdc[1], ft_filter_values, wdm_parameters)[0], wdm_parameters)
         points_x_cdc *= nonlinear_shift(points_x_cdc, points_x_orig)
         points_y_cdc *= nonlinear_shift(points_y_cdc, points_y_orig)
 
@@ -359,7 +365,7 @@ def process_wdm_signal(signal, signal_init, channel, wdm_parameters, wdm_info, p
         if wdm_parameters['n_polarisations'] == 1:
             # NLSE case
             signal_nft = np.concatenate([signal_nft, np.zeros(len(signal) - len(signal_nft), dtype=complex)])
-            points_x_nft_proc = get_points_wdm(receiver_wdm(signal_nft, ft_filter_values, wdm_parameters), wdm_parameters)
+            points_x_nft_proc = get_points_wdm(receiver_wdm(signal_nft, ft_filter_values, wdm_parameters)[0], wdm_parameters)
 
             # put processed points to final result array
             points_x_nft = np.concatenate([points_x_nft, points_x_nft_proc[start_point:end_point]])
@@ -369,8 +375,8 @@ def process_wdm_signal(signal, signal_init, channel, wdm_parameters, wdm_info, p
             # Manakov case
             signal_nft_x = np.concatenate([signal_nft[0], np.zeros(len(signal[0]) - len(signal_nft[0]), dtype=complex)])
             signal_nft_y = np.concatenate([signal_nft[1], np.zeros(len(signal[1]) - len(signal_nft[1]), dtype=complex)])
-            points_x_nft_proc = get_points_wdm(receiver_wdm(signal_nft_x, ft_filter_values, wdm_parameters), wdm_parameters)
-            points_y_nft_proc = get_points_wdm(receiver_wdm(signal_nft_y, ft_filter_values, wdm_parameters), wdm_parameters)
+            points_x_nft_proc = get_points_wdm(receiver_wdm(signal_nft_x, ft_filter_values, wdm_parameters)[0], wdm_parameters)
+            points_y_nft_proc = get_points_wdm(receiver_wdm(signal_nft_y, ft_filter_values, wdm_parameters)[0], wdm_parameters)
 
             # put processed points to final result array
             points_x_nft = np.concatenate([points_x_nft, points_x_nft_proc[start_point:end_point]])
