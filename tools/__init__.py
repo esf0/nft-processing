@@ -1,5 +1,6 @@
 from . import functions
 
 __all__ = [
-    'functions'
+    'functions',
+    'process_signal'
 ]

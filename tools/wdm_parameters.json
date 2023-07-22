@@ -1,0 +1,13 @@
+{
+    "n_channels": 1,
+    "channel_spacing": 75e9,
+    "n_polarisations": 1,
+    "p_ave_dbm": 3,
+    "n_symbols": 65536,
+    "m_order": 16,
+    "roll_off": 0.1,
+    "upsampling": 4,
+    "downsampling_rate": 1,
+    "symb_freq": 34e9,
+    "seed": "time"
+}

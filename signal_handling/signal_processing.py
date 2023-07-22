@@ -1,4 +1,5 @@
 import numpy as np
+
 import signal_handling.signal_generation as sg
 import nft_handling.nft_analyse as nft
 
@@ -772,8 +773,6 @@ def process_signal(q_original, q_prop, z_prop, np_symb, t_symb, n_car, modulatio
               }
 
     return result
-
-
 
 
 #

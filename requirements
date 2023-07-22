@@ -1,0 +1,12 @@
+numba
+numpy
+scipy
+tensorflow
+prettytable
+hpcom
+ssfm-gpu
+matplotlib
+datetime
+pandas
+scikit-learn
+tqdm

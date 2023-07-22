@@ -1,10 +1,11 @@
 from importlib import reload
-import FNFTpy, FNFTpy_extended
-
+# import FNFTpy, FNFTpy_extended
+import FNFTpy
 reload(FNFTpy)
 reload(FNFTpy)
 #from FNFTpy import nsev, nsev_poly
-from FNFTpy_extended import  nsev, nsev_poly, nsev_inverse, nsev_inverse_xi_wrapper, manakovv, manakovv_poly
+# from FNFTpy_extended import nsev, nsev_poly, nsev_inverse, nsev_inverse_xi_wrapper, manakovv, manakovv_poly
+from FNFTpy import nsev, nsev_poly, nsev_inverse, nsev_inverse_xi_wrapper, manakovv, manakovv_poly
 import numpy as np
 import scipy as sp
 from scipy.integrate import simps, trapz
