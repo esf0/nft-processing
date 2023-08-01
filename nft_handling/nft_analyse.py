@@ -2383,6 +2383,19 @@ def aberth_ehrlich(p, max_iter=10, tol=1e-10, check_tol=False, initial=None):
     return roots
 
 
+# metrics
+def trapezoidal_integral(a, step=1.0):
+    return step * (np.sum(a) - 0.5 * (a[0] + a[-1]))
+
+
+def get_energy_discrete(eigenvalues):
+    return 4 * np.sum(np.imag(eigenvalues))
+
+
+def get_energy_continuous(a_xi, xi):
+    return -1. / np.pi * trapezoidal_integral(np.log(np.power(np.absolute(a_xi), 2)), step=(xi[1] - xi[0]))
+
+
 # Not used
 
 # def find_one_eigenvalue_pjt_cauchy(q, t, xi_cont, a_xi, xi_first, xi_second):

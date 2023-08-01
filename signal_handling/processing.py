@@ -1,6 +1,7 @@
 import numpy as np
 import tensorflow as tf
 import pandas as pd
+import gc
 
 from datetime import datetime
 
@@ -601,9 +602,10 @@ def example_nlse_processing(wdm, channel, process_parameters, job_name='test', d
         if save_flag and ((_ % n_iter_save == 0) or (_ == process_parameters['n_steps'] - 1)):
             # intermediate_results.to_parquet(f'results_processing' + job_name + '.parquet')
             intermediate_results.to_pickle(dir + 'results_processing_' + job_name + '_' + str(k_save) + '.pkl')
+            del intermediate_results
+            gc.collect()
             intermediate_results = pd.DataFrame()  # clear the DataFrame to save memory
             k_save += 1
-
 
 
     result = {
@@ -614,6 +616,7 @@ def example_nlse_processing(wdm, channel, process_parameters, job_name='test', d
     }
 
     # Store the variables in a dictionary
+    # wdm_info['ft_filter_values_x'] = wdm_info['ft_filter_values_x'].numpy()
     results_to_save = {
         'signal_x': [signal_x.numpy()],
         'wdm_info': [wdm_info],
@@ -639,3 +642,33 @@ def example_nlse_processing(wdm, channel, process_parameters, job_name='test', d
         df.to_pickle(dir + 'results_meta_' + job_name + '.pkl')
 
     return result
+
+
+def outliers_modified_z_score(evms, threshold=3.5):
+
+    median = np.median(evms[~np.isnan(evms)])
+    median_absolute_deviation = np.median(np.abs(evms[~np.isnan(evms)] - median))
+    modified_z_scores = 0.6745 * (evms - median) / median_absolute_deviation
+    outlier_indices = np.where((np.abs(modified_z_scores) > threshold) | (np.isnan(evms)))
+    ok_indices = np.where(np.abs(modified_z_scores) <= threshold)
+    return outlier_indices, ok_indices
+
+
+def get_evm_outlier_indices(evms, n_std_dev=2.5):
+
+    mean = np.mean(evms)
+    std_dev = np.std(evms)
+
+    # Any point more than 3 standard deviations away from the mean will be considered an outlier
+    # outlier_indices = np.where(np.abs(evms - mean) > 3*std_dev)  # both sides
+    outlier_indices = np.where((evms - mean) > n_std_dev*std_dev)  # only right side (significantly bigger)
+    ok_indices = np.where((evms - mean) <= n_std_dev*std_dev)  # only right side (significantly bigger)
+
+    return outlier_indices, ok_indices
+
+
+def delete_outliners(points, evms, n_symb_proc, threshold=3.5):
+
+    points_shaped = points.reshape((-1, n_symb_proc))  # slice with initial n_symb_proc
+    outlier_indices, ok_indices = outliers_modified_z_score(evms, threshold=threshold)  # find indices to left
+    return points_shaped[ok_indices].reshape(-1)  # reshape back
