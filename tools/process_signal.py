@@ -24,7 +24,7 @@ from ssfm_gpu.propagation import propagate_schrodinger, dispersion_compensation
 from ssfm_gpu.conversion import convert_forward, convert_inverse
 
 # import signal_handling.processing as prcs
-from signal_handling.processing import get_default_process_parameters, example_nlse_processing
+from signal_handling.processing import get_default_process_parameters, example_nlse_processing, nlse_tx_signal_data
 import functions as fn
 
 import FNFTpy as fpy
@@ -44,9 +44,10 @@ channel_json = 'channel_parameters.json'
 data_dir = 'data/'
 job_name = 'process_signal_test'
 
+mode = 'tx'
 save_flag = True
 n_iter_save = 10
-omp_num_threads = 8
+omp_num_threads = 12
 
 wdm = update_wdm_parameters_from_json(wdm_json)
 channel = update_channel_parameters_from_json(channel_json)
@@ -84,12 +85,18 @@ if __name__ == '__main__':
 
     print('List of GPUs:', gpus)
 
-    result = example_nlse_processing(wdm, channel, process_parameters,
+    if mode == 'rx':
+        result = example_nlse_processing(wdm, channel, process_parameters,
+                                         omp_num_threads=omp_num_threads,
+                                         job_name=job_name,
+                                         save_flag=save_flag, dir=data_dir, n_iter_save=n_iter_save)
+        points = result['points']
+        points_nft = result['points_nft']
+        evms = result['evm']
+    elif mode == 'tx':
+        result = nlse_tx_signal_data(wdm, channel, process_parameters,
                                      omp_num_threads=omp_num_threads,
                                      job_name=job_name,
                                      save_flag=save_flag, dir=data_dir, n_iter_save=n_iter_save)
-    points = result['points']
-    points_nft = result['points_nft']
-    evms = result['evm']
 
     print('Finished!')

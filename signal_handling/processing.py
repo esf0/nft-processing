@@ -5,7 +5,8 @@ import gc
 
 from datetime import datetime
 
-from hpcom.signal import create_wdm_parameters, generate_wdm, receiver_wdm, receiver, nonlinear_shift, get_points_wdm, filter_shaper
+from hpcom.signal import create_wdm_parameters, generate_wdm, receiver_wdm, receiver, nonlinear_shift, get_points_wdm, \
+    filter_shaper
 from hpcom.channel import create_channel_parameters
 from hpcom.metrics import get_evm
 
@@ -165,7 +166,8 @@ def get_process_parameters(z_prop, n_symb_proc, n_symb_side, n_symb_skip,
     process['fnft_type'] = fnft_type
     process['nft_type'] = nft_type
     process['use_contour'] = use_contour
-    process['n_discrete_skip'] = n_discrete_skip  # number of discrete points in spectrum beyond the contour if use_contour=True
+    process[
+        'n_discrete_skip'] = n_discrete_skip  # number of discrete points in spectrum beyond the contour if use_contour=True
     process['print_sys_message'] = print_sys_message
     process['n_steps'] = n_steps  # number of processing steps
 
@@ -173,7 +175,6 @@ def get_process_parameters(z_prop, n_symb_proc, n_symb_side, n_symb_skip,
 
 
 def get_windowed_signal(signal, signal_parameters, process_parameters, channel=None):
-
     signal_proc = signal
     if process_parameters['window_mode'] == 'cdc':
 
@@ -331,7 +332,6 @@ def process_nft_window(signal, signal_parameters, process_parameters, channel=No
 
 
 def process_wdm_signal(signal, signal_init, channel, wdm_parameters, wdm_info, process_parameters):
-
     # in case of one polarisation points_y_orig will be empty
     points_x_orig = wdm_info['points_x'][0]  # [0] index for only one WDM channel
     points_y_orig = wdm_info['points_y'][0]  # [0] index for only one WDM channel
@@ -352,7 +352,8 @@ def process_wdm_signal(signal, signal_init, channel, wdm_parameters, wdm_info, p
     elif wdm_parameters['n_polarisations'] == 2:
         # Manakov case
         signal_cdc = dispersion_compensation_manakov(channel, signal[0], signal[1], 1. / wdm_parameters['sample_freq'])
-        points_x_cdc = get_points_wdm(receiver_wdm(signal_cdc[0], ft_filter_values, wdm_parameters)[0], wdm_parameters)  # [0] index for only one WDM channel
+        points_x_cdc = get_points_wdm(receiver_wdm(signal_cdc[0], ft_filter_values, wdm_parameters)[0],
+                                      wdm_parameters)  # [0] index for only one WDM channel
         points_y_cdc = get_points_wdm(receiver_wdm(signal_cdc[1], ft_filter_values, wdm_parameters)[0], wdm_parameters)
         points_x_cdc *= nonlinear_shift(points_x_cdc, points_x_orig)
         points_y_cdc *= nonlinear_shift(points_y_cdc, points_y_orig)
@@ -379,7 +380,8 @@ def process_wdm_signal(signal, signal_init, channel, wdm_parameters, wdm_info, p
         if wdm_parameters['n_polarisations'] == 1:
             # NLSE case
             signal_nft = np.concatenate([signal_nft, np.zeros(len(signal) - len(signal_nft), dtype=complex)])
-            points_x_nft_proc = get_points_wdm(receiver_wdm(signal_nft, ft_filter_values, wdm_parameters)[0], wdm_parameters)
+            points_x_nft_proc = get_points_wdm(receiver_wdm(signal_nft, ft_filter_values, wdm_parameters)[0],
+                                               wdm_parameters)
 
             # put processed points to final result array
             points_x_nft = np.concatenate([points_x_nft, points_x_nft_proc[start_point:end_point]])
@@ -389,8 +391,10 @@ def process_wdm_signal(signal, signal_init, channel, wdm_parameters, wdm_info, p
             # Manakov case
             signal_nft_x = np.concatenate([signal_nft[0], np.zeros(len(signal[0]) - len(signal_nft[0]), dtype=complex)])
             signal_nft_y = np.concatenate([signal_nft[1], np.zeros(len(signal[1]) - len(signal_nft[1]), dtype=complex)])
-            points_x_nft_proc = get_points_wdm(receiver_wdm(signal_nft_x, ft_filter_values, wdm_parameters)[0], wdm_parameters)
-            points_y_nft_proc = get_points_wdm(receiver_wdm(signal_nft_y, ft_filter_values, wdm_parameters)[0], wdm_parameters)
+            points_x_nft_proc = get_points_wdm(receiver_wdm(signal_nft_x, ft_filter_values, wdm_parameters)[0],
+                                               wdm_parameters)
+            points_y_nft_proc = get_points_wdm(receiver_wdm(signal_nft_y, ft_filter_values, wdm_parameters)[0],
+                                               wdm_parameters)
 
             # put processed points to final result array
             points_x_nft = np.concatenate([points_x_nft, points_x_nft_proc[start_point:end_point]])
@@ -412,7 +416,6 @@ def process_wdm_signal(signal, signal_init, channel, wdm_parameters, wdm_info, p
 
 def example_nlse_processing(wdm, channel, process_parameters, job_name='test', dir='',
                             display_c_msg=True, omp_num_threads=4, save_flag=False, n_iter_save=1):
-
     # display_c_msg = False
     # omp_num_threads = 4
     xi_upsampling = 4
@@ -438,12 +441,11 @@ def example_nlse_processing(wdm, channel, process_parameters, job_name='test', d
         np.transpose(np.conjugate(points_x_orig)), points_x_cdc)
     print(shift_factor_x, np.absolute(shift_factor_x))
 
-
     # create array to store all recovered points
     points = np.array([])
     points_nft = np.array([])
     evm = np.array([])
-    return_values = np.empty((0,3), int)
+    return_values = np.empty((0, 3), int)
 
     for _ in range(process_parameters['n_steps']):
         print("Processing iteration", _, "of", process_parameters['n_steps'])  # print step number
@@ -451,23 +453,25 @@ def example_nlse_processing(wdm, channel, process_parameters, job_name='test', d
         # Signal windowing
         # ----------------
         # cut the Tx and Rx signals to the size of the window
-        signal_windowed_cdc, t_window_cdc = get_windowed_signal(signal_prop, signal_parameters=wdm, process_parameters=process_parameters, channel=channel)
-        signal_tx_windowed_cdc, t_tx_window_cdc = get_windowed_signal(signal_x, signal_parameters=wdm, process_parameters=process_parameters, channel=channel)
-
+        signal_windowed_cdc, t_window_cdc = get_windowed_signal(signal_prop, signal_parameters=wdm,
+                                                                process_parameters=process_parameters,
+                                                                channel=channel)
+        signal_tx_windowed_cdc, t_tx_window_cdc = get_windowed_signal(signal_x, signal_parameters=wdm,
+                                                                      process_parameters=process_parameters,
+                                                                      channel=channel)
 
         # Convert signal to dimensionless form
         # ------------------------------------
         convert_result = convert_inverse(signal_windowed_cdc, t_window_cdc, channel['z_span'],
-                                     channel['beta2'],
-                                     channel['gamma'],
-                                     t0=1. / wdm['symb_freq'], type='nlse')
+                                         channel['beta2'],
+                                         channel['gamma'],
+                                         t0=1. / wdm['symb_freq'], type='nlse')
 
         q_windowed_cdc = convert_result['q']
         t_dl_window_cdc = convert_result['t']
         dt_dl = t_dl_window_cdc[0] - t_dl_window_cdc[1]
         z_span_dimless = convert_result['z']
         z_dimless = z_span_dimless * channel['n_spans']
-
 
         # Arrange parameters for the transformation
         # -----------------------------------------
@@ -484,20 +488,19 @@ def example_nlse_processing(wdm, channel, process_parameters, job_name='test', d
         rv, xi_val = fpy.nsev_inverse_xi_wrapper(n_t, t_for_nft[0], t_for_nft[-1], n_xi)
         xi = xi_val[0] + np.arange(n_xi) * (xi_val[1] - xi_val[0]) / (n_xi - 1)
 
-
         # Forward NFT
         # -----------
-        fnft_type=11
+        fnft_type = 11
 
         start_time = datetime.now()
-        result_nlse = fpy.nsev(q_windowed_cdc, t_for_nft, xi[0], xi[-1], n_xi, dst=3, cst=2, dis=fnft_type, K=2048, display_c_msg=display_c_msg)
+        result_nlse = fpy.nsev(q_windowed_cdc, t_for_nft, xi[0], xi[-1], n_xi, dst=3, cst=2, dis=fnft_type, K=2048,
+                               display_c_msg=display_c_msg)
         print("forward NFT took", (datetime.now() - start_time).total_seconds() * 1000, "ms")
         start_time = datetime.now()
         result_pjt = pjt.pjt(q_windowed_cdc, t_for_nft,
                              contSpec=None, omp_num_threads=omp_num_threads, display_c_msg=display_c_msg)
         # result_pjt = pjt.pjt(q_windowed_cdc, t_for_nft, contSpec=np.concatenate([xi, result_nlse['cont_a']]), omp_num_threads=4, display_c_msg=True)
         print("PJT took", (datetime.now() - start_time).total_seconds() * 1000, "ms")
-
 
         # Nonlinear spectrum evolution
         # ----------------------------
@@ -512,10 +515,8 @@ def example_nlse_processing(wdm, channel, process_parameters, job_name='test', d
         xi_d = res['bound_states']
         # ad = bd / rd
 
-
         b_prop = b * np.exp(-2. * 1.0j * z_dimless * np.power(xi, 2))
         bd_prop = bd * np.exp(-2. * 1.0j * z_dimless * np.power(xi_d, 2))
-
 
         # Inverse NFT
         # -----------
@@ -533,13 +534,12 @@ def example_nlse_processing(wdm, channel, process_parameters, job_name='test', d
         # Inverse conversion from dimensionless form
         # ------------------------------------------
         convert_forward_result = convert_forward(q_fnft, t_dl_window_cdc, z_span_dimless,
-                                             channel['beta2'],
-                                             channel['gamma'],
-                                             t0=1. / wdm['symb_freq'], type='nlse')
+                                                 channel['beta2'],
+                                                 channel['gamma'],
+                                                 t0=1. / wdm['symb_freq'], type='nlse')
 
         signal_nft = convert_forward_result['Q']
         t_nft = convert_forward_result['T']
-
 
         # Decode constellation points
         # ---------------------------
@@ -548,7 +548,8 @@ def example_nlse_processing(wdm, channel, process_parameters, job_name='test', d
         signal_nft_complete = np.concatenate([signal_nft, np.zeros(n_signal_total - len(signal_nft))])
         signal_nft_complete = tf.cast(signal_nft_complete, tf.complex128)
 
-        points_x_nft = get_points_wdm(filter_shaper(signal_nft_complete, ft_filter_values)[::wdm['downsampling_rate']], wdm)
+        points_x_nft = get_points_wdm(filter_shaper(signal_nft_complete, ft_filter_values)[::wdm['downsampling_rate']],
+                                      wdm)
 
         # for NFT processed we have n_symb_add + n_symb_side points from left
         n_points_start_nft = int(process_parameters['n_symb_side'] + process_parameters['n_symb_add'])
@@ -570,17 +571,16 @@ def example_nlse_processing(wdm, channel, process_parameters, job_name='test', d
         points_found_nft *= shift_factor_x_nft
         print("shift factor for x:", shift_factor_x_nft)
 
-
         # Now we can store points and continue signal processing
         # ------------------------------------------------------
         points = np.concatenate([points, points_was_orig])
         points_nft = np.concatenate([points_nft, points_found_nft])
         evm = np.append(evm, get_evm(points_was_orig, points_found_nft))
-        return_values = np.append(return_values, [[result_nlse['return_value'], res['return_value'], result_nsev_inverse['return_value']]])
+        return_values = np.append(return_values, [
+            [result_nlse['return_value'], res['return_value'], result_nsev_inverse['return_value']]])
 
         # Now we can increment 'n_symb_skip' by 'n_symb_proc' and continue signal processing
         process_parameters['n_symb_skip'] += process_parameters['n_symb_proc']
-
 
         # Create a dictionary with current values of b, r, rd, bd, xi_d, xi, q_windowed_cdc, and t_for_nft
         iteration_data = {
@@ -606,7 +606,6 @@ def example_nlse_processing(wdm, channel, process_parameters, job_name='test', d
             gc.collect()
             intermediate_results = pd.DataFrame()  # clear the DataFrame to save memory
             k_save += 1
-
 
     result = {
         'points': points,
@@ -644,8 +643,153 @@ def example_nlse_processing(wdm, channel, process_parameters, job_name='test', d
     return result
 
 
-def outliers_modified_z_score(evms, threshold=3.5):
+def nlse_tx_signal_data(wdm, channel, process_parameters, job_name='test', dir='',
+                            display_c_msg=True, omp_num_threads=4, save_flag=False, n_iter_save=1):
+    # display_c_msg = False
+    # omp_num_threads = 4
+    xi_upsampling = 4
+    fnft_type = 11
 
+    # n_iter_save = 10  # Number of iterations after which to save to a parquet file
+
+    # Initialize DataFrame to hold the variables to save after every N iterations
+    intermediate_results = pd.DataFrame()
+    k_save = 0
+
+    signal_x, wdm_info = generate_wdm(wdm)
+
+
+    # create array to store all return values from algorithms
+    return_values = np.empty((0, 2), int)
+
+    for _ in range(process_parameters['n_steps']):
+        print("Processing iteration", _, "of", process_parameters['n_steps'])  # print step number
+
+        # Signal windowing
+        # ----------------
+        # cut the Tx signal to the size of the window
+
+        signal_tx_windowed_cdc, t_tx_window_cdc = get_windowed_signal(signal_x, signal_parameters=wdm,
+                                                                      process_parameters=process_parameters,
+                                                                      channel=channel)
+
+        # Convert signal to dimensionless form
+        # ------------------------------------
+        convert_result = convert_inverse(signal_tx_windowed_cdc, t_tx_window_cdc, channel['z_span'],
+                                         channel['beta2'],
+                                         channel['gamma'],
+                                         t0=1. / wdm['symb_freq'], type='nlse')
+
+        q_windowed_cdc = convert_result['q']
+        t_dl_window_cdc = convert_result['t']
+        dt_dl = t_dl_window_cdc[0] - t_dl_window_cdc[1]
+        z_span_dimless = convert_result['z']
+        z_dimless = z_span_dimless * channel['n_spans']
+
+        # Arrange parameters for the transformation
+        # -----------------------------------------
+        t = (np.arange(len(signal_x)) - len(signal_x) / 2) / wdm['sample_freq']
+        n_t = len(t_dl_window_cdc)
+        t_span = t[-1] - t[0]
+
+        # shift time to shift signal in the center of the time interval
+        t_for_nft = t_dl_window_cdc - (t_dl_window_cdc[-1] + t_dl_window_cdc[0]) / 2
+
+        # arrange nonlinear frequency grid \xi
+        n_xi = xi_upsampling * n_t
+        rv, xi_val = fpy.nsev_inverse_xi_wrapper(n_t, t_for_nft[0], t_for_nft[-1], n_xi)
+        xi = xi_val[0] + np.arange(n_xi) * (xi_val[1] - xi_val[0]) / (n_xi - 1)
+
+        # Forward NFT
+        # -----------
+
+        start_time = datetime.now()
+        result_nlse = fpy.nsev(q_windowed_cdc, t_for_nft, xi[0], xi[-1], n_xi, dst=3, cst=2, dis=fnft_type, K=2048,
+                               display_c_msg=display_c_msg)
+        print("forward NFT took", (datetime.now() - start_time).total_seconds() * 1000, "ms")
+        start_time = datetime.now()
+        result_pjt = pjt.pjt(q_windowed_cdc, t_for_nft,
+                             contSpec=None, omp_num_threads=omp_num_threads, display_c_msg=display_c_msg)
+        # result_pjt = pjt.pjt(q_windowed_cdc, t_for_nft, contSpec=np.concatenate([xi, result_nlse['cont_a']]), omp_num_threads=4, display_c_msg=True)
+        print("PJT took", (datetime.now() - start_time).total_seconds() * 1000, "ms")
+
+        # Nonlinear spectrum evolution
+        # ----------------------------
+        a = result_nlse['cont_a']
+        b = result_nlse['cont_b']
+        r = result_nlse['cont_ref']
+
+        res = result_pjt
+
+        rd = res['disc_res']
+        bd = res['disc_norm']
+        xi_d = res['bound_states']
+
+
+        # Now we can store points and continue signal processing
+        # ------------------------------------------------------
+        return_values = np.append(return_values, [
+            [
+                result_nlse['return_value'], res['return_value']
+            ]
+        ])
+
+        # Now we can increment 'n_symb_skip' by 'n_symb_proc' and continue signal processing
+        process_parameters['n_symb_skip'] += process_parameters['n_symb_proc']
+
+        # Create a dictionary with current values of b, r, rd, bd, xi_d, xi, q_windowed_cdc, and t_for_nft
+        iteration_data = {
+            'a': [a],
+            'b': [b],
+            'r': [r],
+            'rd': [rd],
+            'bd': [bd],
+            'xi_d': [xi_d],
+            'xi': [xi],
+            'q_windowed_cdc': [q_windowed_cdc],
+            't_for_nft': [t_for_nft]
+        }
+
+        # Append the dictionary as a new row to the DataFrame
+        # intermediate_results = intermediate_results.append(iteration_data, ignore_index=True)
+        intermediate_results = pd.concat([intermediate_results, pd.DataFrame(iteration_data)], ignore_index=True)
+
+        # If the current iteration number is divisible by N, save the DataFrame to a parquet file
+        if save_flag and ((_ % n_iter_save == 0) or (_ == process_parameters['n_steps'] - 1)):
+            # intermediate_results.to_parquet(f'results_processing' + job_name + '.parquet')
+            intermediate_results.to_pickle(dir + 'results_processing_' + job_name + '_' + str(k_save) + '.pkl')
+            del intermediate_results
+            gc.collect()
+            intermediate_results = pd.DataFrame()  # clear the DataFrame to save memory
+            k_save += 1
+
+    result = {
+        'return_values': return_values
+    }
+
+    # Store the variables in a dictionary
+    results_to_save = {
+        'signal_x': [signal_x.numpy()],
+        'wdm_info': [wdm_info],
+        'process_parameters': [process_parameters],
+        'wdm': [wdm],
+        'channel': [channel],
+        'return_values': [return_values]
+    }
+
+    # Convert the dictionary to a pandas DataFrame
+    df = pd.DataFrame(results_to_save)
+
+    # Save the DataFrame to a parquet file
+    if save_flag:
+        # df.to_parquet('results_meta_' + job_name + '.parquet')
+        df.to_pickle(dir + 'results_meta_' + job_name + '.pkl')
+
+    return result
+
+
+
+def outliers_modified_z_score(evms, threshold=3.5):
     median = np.median(evms[~np.isnan(evms)])
     median_absolute_deviation = np.median(np.abs(evms[~np.isnan(evms)] - median))
     modified_z_scores = 0.6745 * (evms - median) / median_absolute_deviation
@@ -655,20 +799,18 @@ def outliers_modified_z_score(evms, threshold=3.5):
 
 
 def get_evm_outlier_indices(evms, n_std_dev=2.5):
-
     mean = np.mean(evms)
     std_dev = np.std(evms)
 
     # Any point more than 3 standard deviations away from the mean will be considered an outlier
     # outlier_indices = np.where(np.abs(evms - mean) > 3*std_dev)  # both sides
-    outlier_indices = np.where((evms - mean) > n_std_dev*std_dev)  # only right side (significantly bigger)
-    ok_indices = np.where((evms - mean) <= n_std_dev*std_dev)  # only right side (significantly bigger)
+    outlier_indices = np.where((evms - mean) > n_std_dev * std_dev)  # only right side (significantly bigger)
+    ok_indices = np.where((evms - mean) <= n_std_dev * std_dev)  # only right side (significantly bigger)
 
     return outlier_indices, ok_indices
 
 
 def delete_outliners(points, evms, n_symb_proc, threshold=3.5):
-
     points_shaped = points.reshape((-1, n_symb_proc))  # slice with initial n_symb_proc
     outlier_indices, ok_indices = outliers_modified_z_score(evms, threshold=threshold)  # find indices to left
     return points_shaped[ok_indices].reshape(-1)  # reshape back
