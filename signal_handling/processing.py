@@ -59,8 +59,11 @@ def get_interval(signal, n_symb, n_points_symbol, n_symb_skip):
     Returns:
 
     """
+    result = signal[n_symb_skip * n_points_symbol:(n_symb_skip + n_symb) * n_points_symbol]
+    if len(result) == 0:
+        raise ValueError('Empty interval!')
 
-    return signal[n_symb_skip * n_points_symbol:(n_symb_skip + n_symb) * n_points_symbol]
+    return result
 
 
 def get_sub_signal(signal, signal_parameters, process_parameters):
@@ -179,8 +182,9 @@ def get_windowed_signal(signal, signal_parameters, process_parameters, channel=N
     if process_parameters['window_mode'] == 'cdc':
 
         if channel is None:
-            print('[get_windowed_signal] Error: for cdc window mode you have to provide channel parameters')
-            return -2
+            raise ValueError('[get_windowed_signal] Error: for cdc window mode you have to provide channel parameters')
+            # print('[get_windowed_signal] Error: for cdc window mode you have to provide channel parameters')
+            # return -2
 
         dt = 1. / signal_parameters['sample_freq']
 
@@ -207,8 +211,9 @@ def get_windowed_signal(signal, signal_parameters, process_parameters, channel=N
             channel['z_span'] = -channel['z_span']  # return to original state
 
         else:
-            print('[get_windowed_signal] Error: unsupported number of polarisations')
-            return -3
+            raise ValueError('unsupported number of polarisations')
+            # print('[get_windowed_signal] Error: unsupported number of polarisations')
+            # return -3
 
         if signal_parameters['n_polarisations'] == 2:
             signal_proc = (signal_proc[0].numpy(), signal_proc[1].numpy())
@@ -224,8 +229,9 @@ def get_windowed_signal(signal, signal_parameters, process_parameters, channel=N
             signal_proc = signal_proc.numpy()
 
     else:
-        print('window mode ' + process_parameters['window_mode'] + ' is not defined')
-        return -1
+        raise ValueError('window mode ' + process_parameters['window_mode'] + ' is not defined')
+        # print('window mode ' + process_parameters['window_mode'] + ' is not defined')
+        # return -1
 
     # additional number of symbols for sides
     process_parameters['n_symb_skip'] -= process_parameters['n_symb_add']  # shift to the left
@@ -241,7 +247,8 @@ def get_windowed_signal(signal, signal_parameters, process_parameters, channel=N
         signal_cut, t_cut = get_sub_signal(signal_proc, signal_parameters, process_parameters)
 
     else:
-        return -1
+        # return -1
+        raise Exception('unsupported number of polarisations')
 
     process_parameters['n_symb_skip'] += process_parameters['n_symb_add']  # shift to the left
     process_parameters['n_symb_total'] -= 2 * process_parameters['n_symb_add']
@@ -644,7 +651,8 @@ def example_nlse_processing(wdm, channel, process_parameters, job_name='test', d
 
 
 def nlse_tx_signal_data(wdm, channel, process_parameters, job_name='test', dir='',
-                            display_c_msg=True, omp_num_threads=4, save_flag=False, n_iter_save=1):
+                        display_c_msg=True, omp_num_threads=4, save_flag=False, n_iter_save=1,
+                        verbose=0):
     # display_c_msg = False
     # omp_num_threads = 4
     xi_upsampling = 4
@@ -663,7 +671,7 @@ def nlse_tx_signal_data(wdm, channel, process_parameters, job_name='test', dir='
     return_values = np.empty((0, 2), int)
 
     for _ in range(process_parameters['n_steps']):
-        print("Processing iteration", _, "of", process_parameters['n_steps'])  # print step number
+        print("Processing iteration", _, "of", process_parameters['n_steps']) if verbose >= 1 else ... # print step number
 
         # Signal windowing
         # ----------------
@@ -706,12 +714,12 @@ def nlse_tx_signal_data(wdm, channel, process_parameters, job_name='test', dir='
         start_time = datetime.now()
         result_nlse = fpy.nsev(q_windowed_cdc, t_for_nft, xi[0], xi[-1], n_xi, dst=3, cst=2, dis=fnft_type, K=2048,
                                display_c_msg=display_c_msg)
-        print("forward NFT took", (datetime.now() - start_time).total_seconds() * 1000, "ms")
+        print("forward NFT took", (datetime.now() - start_time).total_seconds() * 1000, "ms") if verbose >= 2 else ...
         start_time = datetime.now()
         result_pjt = pjt.pjt(q_windowed_cdc, t_for_nft,
                              contSpec=None, omp_num_threads=omp_num_threads, display_c_msg=display_c_msg)
         # result_pjt = pjt.pjt(q_windowed_cdc, t_for_nft, contSpec=np.concatenate([xi, result_nlse['cont_a']]), omp_num_threads=4, display_c_msg=True)
-        print("PJT took", (datetime.now() - start_time).total_seconds() * 1000, "ms")
+        print("PJT took", (datetime.now() - start_time).total_seconds() * 1000, "ms") if verbose >= 2 else ...
 
         # Nonlinear spectrum evolution
         # ----------------------------
